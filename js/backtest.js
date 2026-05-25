@@ -314,11 +314,25 @@ const Backtest = {
             <label class="form-label">Min Conf</label>
             <input id="bt-minconf" class="form-input" type="number" min="40" max="95" value="${minCf}">
           </div>
-          <div style="display:flex;align-items:end">
-            <button class="btn btn-primary" onclick="Backtest.runFromUI()" style="width:100%">▶ Run Backtest</button>
+          <div style="display:flex;align-items:end;gap:4px">
+            <button class="btn btn-primary" onclick="Backtest.runFromUI()" style="flex:1">▶ Run</button>
           </div>
         </div>
       </div>
+
+      <div style="background:linear-gradient(90deg,rgba(157,78,221,0.15),transparent);border:1px solid var(--purple);padding:10px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:8px;color:var(--purple)">🤖 AUTO-OPTIMIZE — ทดสอบหลาย combinations + พัฒนาตัวเอง</div>
+          <button class="btn btn-secondary" onclick="AutoOptimize.start({maxCycles: 999})">🚀 Start Auto-Opt</button>
+        </div>
+        <div style="font-size:6px;color:var(--gray)">
+          จะทดสอบทุก combinations ของ 3 symbols × 3 modes × 4 confidence × 3 ADX gates ต่อ cycle.<br>
+          ระหว่าง cycle จะ re-fetch history ใหม่. ส่ง Telegram ทุก cycle. Auto-apply best config เมื่อเสร็จ.<br>
+          <b style="color:var(--yellow)">💡 เปิดทิ้งไว้ค้างคืน → ตื่นเช้ามาได้ best strategy ที่พิสูจน์แล้ว</b>
+        </div>
+        <div id="auto-progress" style="margin-top:8px"></div>
+      </div>
+
       <div id="bt-result">${this.render(this.lastResult)}</div>
     `;
   },
@@ -334,3 +348,271 @@ const Backtest = {
 };
 
 window.Backtest = Backtest;
+
+/* ═══════════════════════════════════════════════════════
+   AUTO-OPTIMIZE — Self-improving loop
+     - รัน backtest หลาย combinations อัตโนมัติ
+     - Re-fetch history ระหว่าง cycle
+     - เก็บ best configs ตาม Total R + Win Rate
+     - ส่ง Telegram progress
+     - Auto-apply config ที่ดีที่สุดเมื่อเสร็จ
+   ═══════════════════════════════════════════════════════ */
+const AutoOptimize = {
+  running:   false,
+  startTs:   0,
+  cycles:    0,
+  iterations: 0,
+  bestPerSym: {},   // best config per symbol
+  history:   [],    // all runs
+  log:       [],
+
+  async start(opts = {}) {
+    if (this.running) return;
+    this.running = true;
+    this.startTs = Date.now();
+    this.cycles = 0;
+    this.iterations = 0;
+    this.bestPerSym = {};
+    this.history = [];
+    this.log = [];
+
+    const symbols = opts.symbols || ['XAUUSD', 'AUDUSD', 'EURUSD'];
+    const modes   = opts.modes   || ['scalp', 'swing', 'position'];
+    const confs   = opts.confs   || [55, 65, 75, 85];
+    const adxGates = opts.adxGates || [0, 20, 25];
+    const maxCycles = opts.maxCycles || 200;
+    const refetchEachCycle = opts.refetchEachCycle ?? true;
+
+    this._addLog(`🤖 Auto-Optimize started — symbols: ${symbols.join(',')}, modes: ${modes.join(',')}, confs: ${confs.join(',')}, ADX: ${adxGates.join(',')}`);
+
+    if (Settings.get('telegramOn')) {
+      await Telegram._send(
+        `🤖 <b>Auto-Optimize เริ่มแล้ว</b>\n` +
+        `เริ่ม: ${new Date().toLocaleString('th-TH')}\n` +
+        `Symbols: ${symbols.join(', ')}\n` +
+        `Modes: ${modes.join(', ')}\n` +
+        `Conf: ${confs.join('/')}\n` +
+        `Max cycles: ${maxCycles}\n\n` +
+        `<i>จะส่ง progress ทุก cycle และส่ง best config ตอนเสร็จ</i>`
+      );
+    }
+
+    // Silence live Telegram during optimization (avoid spam)
+    const origTelegramOn = Settings.get('telegramOn');
+    Settings.set('telegramOn', false);
+
+    try {
+      while (this.running && this.cycles < maxCycles) {
+        const cycleStart = Date.now();
+        this.cycles++;
+        this._addLog(`▶ Cycle ${this.cycles}/${maxCycles}`);
+
+        // Re-fetch fresh history
+        if (refetchEachCycle && this.cycles > 1) {
+          await this._refetchAll(symbols);
+        }
+
+        const cycleResults = [];
+        for (const sym of symbols) {
+          for (const mode of modes) {
+            for (const conf of confs) {
+              for (const adx of adxGates) {
+                if (!this.running) break;
+                Settings.set('adxGate', adx);
+                const r = await Backtest.run(sym, { mode, minConf: conf });
+                this.iterations++;
+                if (r && !r.error && r.totalTrades >= 5) {
+                  const score = parseFloat(r.totalR) + (r.winRate / 100) * 2; // weighted score
+                  const config = {
+                    symbol: sym, mode, minConf: conf, adxGate: adx,
+                    cycle: this.cycles,
+                    trades: r.totalTrades,
+                    winRate: r.winRate,
+                    totalR:  parseFloat(r.totalR),
+                    avgR:    parseFloat(r.avgR),
+                    maxDD:   parseFloat(r.maxDrawdown),
+                    PF:      r.profitFactor,
+                    score,
+                  };
+                  cycleResults.push(config);
+                  this.history.push(config);
+
+                  // Track best per symbol
+                  const cur = this.bestPerSym[sym];
+                  if (!cur || score > cur.score) this.bestPerSym[sym] = config;
+                }
+                // Yield to UI
+                await new Promise(r => setTimeout(r, 30));
+                this._renderProgress();
+              }
+            }
+          }
+        }
+
+        const cycleDur = ((Date.now() - cycleStart) / 1000).toFixed(0);
+        this._addLog(`✓ Cycle ${this.cycles} done in ${cycleDur}s, found ${cycleResults.length} valid configs`);
+
+        // Send Telegram progress for this cycle
+        if (origTelegramOn) {
+          await this._sendCycleProgress(cycleResults);
+        }
+
+        // If no improvement for 3 cycles, stop early
+        if (this.cycles >= 3 && this._noImprovement(3)) {
+          this._addLog('🎯 No improvement for 3 cycles — stopping early (converged)');
+          break;
+        }
+      }
+
+      // Send final summary
+      Settings.set('telegramOn', origTelegramOn);
+      if (origTelegramOn) await this._sendFinalSummary();
+
+      // Auto-apply best XAUUSD config (most common use)
+      if (opts.autoApply !== false) this._applyBest();
+
+      this._addLog(`🏁 Done — ${this.cycles} cycles, ${this.iterations} iterations, ${this.history.length} valid results`);
+    } finally {
+      this.running = false;
+      Settings.set('telegramOn', origTelegramOn);
+      this._renderProgress();
+    }
+  },
+
+  stop() {
+    if (this.running) {
+      this.running = false;
+      this._addLog('⏹ Stopped by user');
+    }
+  },
+
+  _addLog(msg) {
+    const ts = new Date().toLocaleTimeString();
+    this.log.unshift(`[${ts}] ${msg}`);
+    if (this.log.length > 50) this.log.length = 50;
+    if (typeof UI !== 'undefined') UI.addLog('CMD', 'AutoOpt', msg);
+  },
+
+  async _refetchAll(symbols) {
+    const apiKey = Settings.get('priceApiKey');
+    if (!apiKey && !TradingWarRoom.market._onAppsScript()) return;
+    for (const sym of symbols) {
+      try {
+        const h = await TradingWarRoom.market.fetchHistory(sym, '5min', 500, apiKey);
+        if (h && h.length > 100) {
+          TradingWarRoom.market.applyHistory(sym, h);
+        }
+        await new Promise(r => setTimeout(r, 500)); // rate limit
+      } catch (e) { /* silent */ }
+    }
+    this._addLog(`📊 Re-fetched ${symbols.length} symbols`);
+  },
+
+  _noImprovement(window) {
+    if (this.history.length < window * 4) return false;
+    const recent = this.history.slice(-window * 4);
+    const earlier = this.history.slice(-window * 8, -window * 4);
+    if (earlier.length === 0) return false;
+    const maxRecent = Math.max(...recent.map(c => c.score));
+    const maxEarlier = Math.max(...earlier.map(c => c.score));
+    return maxRecent <= maxEarlier;
+  },
+
+  async _sendCycleProgress(cycleResults) {
+    const top3 = cycleResults.slice().sort((a,b) => b.score - a.score).slice(0, 3);
+    if (top3.length === 0) return;
+    const elapsed = ((Date.now() - this.startTs) / 60000).toFixed(0);
+    let msg = `🤖 <b>Auto-Opt Cycle ${this.cycles}</b>\n`;
+    msg += `⏱ Elapsed: ${elapsed} นาที | Iterations: ${this.iterations}\n\n`;
+    msg += `<b>Top 3 this cycle:</b>\n`;
+    top3.forEach((c, i) => {
+      msg += `${i+1}. ${c.symbol} ${c.mode} conf${c.minConf} ADX${c.adxGate}\n`;
+      msg += `   ${c.trades}T | ${c.winRate}% | <b>${c.totalR > 0 ? '+' : ''}${c.totalR.toFixed(2)}R</b> | DD ${c.maxDD}R\n`;
+    });
+    await Telegram._send(msg);
+  },
+
+  async _sendFinalSummary() {
+    const top10 = this.history.slice().sort((a,b) => b.score - a.score).slice(0, 10);
+    const symBest = Object.values(this.bestPerSym);
+    const totalMin = ((Date.now() - this.startTs) / 60000).toFixed(0);
+
+    let msg = `🏁 <b>Auto-Optimize เสร็จสมบูรณ์!</b>\n`;
+    msg += `${'─'.repeat(28)}\n`;
+    msg += `⏱ ใช้เวลา: ${totalMin} นาที\n`;
+    msg += `🔄 Cycles: ${this.cycles} | Tests: ${this.iterations}\n`;
+    msg += `✅ Valid configs: ${this.history.length}\n\n`;
+
+    msg += `<b>🏆 Best per Symbol:</b>\n`;
+    symBest.forEach(c => {
+      const tag = c.totalR > 0 ? '🟢' : '🔴';
+      msg += `${tag} <b>${c.symbol}</b>: ${c.mode} conf${c.minConf}\n`;
+      msg += `   ${c.trades}T | <b>${c.winRate}%</b> | ${c.totalR > 0 ? '+' : ''}${c.totalR.toFixed(2)}R | PF ${c.PF}\n`;
+    });
+
+    msg += `\n<b>🌟 Top 5 Overall:</b>\n`;
+    top10.slice(0, 5).forEach((c, i) => {
+      msg += `${i+1}. ${c.symbol}/${c.mode}/c${c.minConf}/adx${c.adxGate}\n`;
+      msg += `   <b>${c.totalR > 0 ? '+' : ''}${c.totalR.toFixed(2)}R</b> | ${c.winRate}% (${c.trades}T)\n`;
+    });
+
+    msg += `\n<i>💡 ระบบจะ auto-apply config ที่ดีที่สุดของ symbol แต่ละตัว — ปรับใน Settings ได้</i>`;
+    await Telegram._send(msg);
+  },
+
+  /** Apply the best config (highest score) to live Settings */
+  _applyBest() {
+    const all = Object.values(this.bestPerSym);
+    if (all.length === 0) return;
+    // Apply config of best symbol overall
+    const best = all.slice().sort((a,b) => b.score - a.score)[0];
+    Settings.set('tradeMode', best.mode);
+    Settings.set('adxGate',   best.adxGate);
+    this._addLog(`✨ Applied best config: ${best.symbol}/${best.mode}/conf${best.minConf}/adx${best.adxGate} (+${best.totalR.toFixed(2)}R)`);
+  },
+
+  _renderProgress() {
+    const el = document.getElementById('auto-progress');
+    if (!el) return;
+    if (!this.running && this.iterations === 0) {
+      el.innerHTML = '';
+      return;
+    }
+    const elapsed = ((Date.now() - this.startTs) / 60000).toFixed(1);
+    const top = this.history.slice().sort((a,b) => b.score - a.score).slice(0, 5);
+    const status = this.running ? '🤖 RUNNING' : '🏁 DONE';
+    const sc = this.running ? 'var(--green)' : 'var(--gold)';
+
+    let rows = top.map((c, i) => `<tr>
+      <td>${i+1}</td>
+      <td class="text-teal">${c.symbol}</td>
+      <td>${c.mode}</td>
+      <td>${c.minConf}</td>
+      <td>${c.adxGate}</td>
+      <td>${c.trades}</td>
+      <td class="${c.winRate >= 50 ? 'text-green' : 'text-red'}">${c.winRate}%</td>
+      <td class="${c.totalR > 0 ? 'text-green' : 'text-red'}">${c.totalR > 0 ? '+' : ''}${c.totalR.toFixed(2)}R</td>
+      <td>${c.PF}</td>
+    </tr>`).join('');
+    if (rows === '') rows = '<tr><td colspan="9" style="text-align:center;color:var(--gray);padding:10px">ยังไม่มีผลลัพธ์...</td></tr>';
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:${sc};font-size:8px">
+        <span>${status} — Cycle ${this.cycles} | Iter ${this.iterations} | Elapsed ${elapsed}m | Found ${this.history.length}</span>
+        ${this.running ? '<button class="btn btn-secondary" onclick="AutoOptimize.stop()">⏹ Stop</button>' : ''}
+      </div>
+      <div style="font-size:7px;color:var(--gold);margin:4px 0">🏆 Top 5 Configs</div>
+      <div class="j-table-wrap" style="max-height:140px">
+        <table class="j-table">
+          <thead><tr>
+            <th>#</th><th>Sym</th><th>Mode</th><th>Conf</th><th>ADX</th><th>T</th><th>WR</th><th>PnL</th><th>PF</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  },
+};
+
+window.AutoOptimize = AutoOptimize;
+
