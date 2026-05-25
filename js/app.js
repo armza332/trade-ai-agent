@@ -38,6 +38,22 @@ const TradingWarRoom = {
 
     // Mark live
     document.getElementById('live-status').textContent = 'LIVE';
+
+    // Keep-Alive: ป้องกัน tab sleep + browser notification
+    if (Settings.get('keepAlive', true) && typeof KeepAlive !== 'undefined') {
+      KeepAlive.enable().then(() => {
+        const s = KeepAlive.status();
+        this._log('CMD', 'KeepAlive', `🔋 ${s.wakeLockActive ? 'Wake Lock ✅' : 'Wake Lock ❌'} | Notif: ${s.notifPermission}`);
+      });
+    }
+
+    // Daily news summary — ส่งวันละครั้ง (เก็บใน localStorage วันที่ล่าสุดที่ส่ง)
+    this._dailyNewsCheck();
+    setInterval(() => this._dailyNewsCheck(), 60 * 60 * 1000); // เช็คทุก 1 ชม.
+
+    // Upcoming news warning — ตรวจทุก 30 นาที ส่งเตือนถ้ามีข่าว high ใน 1 ชม.
+    this._upcomingNewsCheck();
+    setInterval(() => this._upcomingNewsCheck(), 30 * 60 * 1000);
     this._log('CMD', 'Commander', '🟢 Trading War Room initialized. All agents ONLINE.');
     this._log('GOLD', 'Maj.Gold', '⚡ GOLD TEAM ready — monitoring XAUUSD.');
     this._log('FX', 'Maj.FX', '💱 CURRENCY TEAM ready — monitoring AUDUSD & EURUSD.');
@@ -120,6 +136,14 @@ const TradingWarRoom = {
     // Banner + เสียง: เฉพาะ A/S+ (high-confidence visual alert)
     if (gradeInfo.alert && this._lastGrade !== gradeInfo.grade) {
       SignalGrade.playSound(gradeInfo);
+      // Native browser notification (เสริม Telegram)
+      if (typeof KeepAlive !== 'undefined') {
+        KeepAlive.notify(
+          `${gradeInfo.grade} ${cmdR.signal.toUpperCase()} ${cmdR.sym}`,
+          `Entry ${cmdR.entry} | SL ${cmdR.sl} | TP1 ${cmdR.tp1} | Conf ${cmdR.conf}%`,
+          { tag: 'twr-grade-' + gradeInfo.grade, requireInteraction: gradeInfo.grade === 'S+' }
+        );
+      }
     }
 
     this._lastGrade = gradeInfo.grade;
@@ -173,6 +197,59 @@ const TradingWarRoom = {
 
     // Load MTF candles too (1h, 4h, Daily) — populates market._mtfData
     await this._loadMTF();
+  },
+
+  async _dailyNewsCheck() {
+    if (!Settings.get('telegramOn')) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const lastSent = localStorage.getItem('twr_news_last');
+    if (lastSent === today) return;
+
+    // ส่งช่วง 7-9 UTC (Asia session) — หรือถ้า boot ครั้งแรกหลัง 7 UTC
+    const h = new Date().getUTCHours();
+    if (h < 7) return;
+
+    const r = await Telegram.sendDailyNews();
+    if (r && r.ok) {
+      localStorage.setItem('twr_news_last', today);
+      this._log('CMD', 'NewsBot', '📰 ส่งสรุปข่าววันนี้แล้ว');
+    }
+  },
+
+  async _upcomingNewsCheck() {
+    if (!Settings.get('telegramOn')) return;
+    // เก็บ event ที่ส่ง warning ไปแล้วใน session
+    if (!this._sentNewsWarnings) this._sentNewsWarnings = new Set();
+    const day = new Date().getUTCDay();
+    if (day === 0 || day === 6) return;
+
+    const newsAgent = new NewsAgent('ALL', ['XAU','USD','AUD','EUR','GBP']);
+    const events = newsAgent._calendar();
+    const now = new Date();
+    const nowDec = now.getUTCHours() + now.getUTCMinutes() / 60;
+
+    const enabledCurr = ['USD'];
+    if (Settings.get('enableXAU', true)) enabledCurr.push('XAU');
+    if (Settings.get('enableAUD', true)) enabledCurr.push('AUD');
+    if (Settings.get('enableEUR', true)) enabledCurr.push('EUR');
+
+    const upcoming = events.filter(e => {
+      if (e.impact !== 'high') return false;
+      if (!enabledCurr.some(p => e.curr.includes(p))) return false;
+      const [eh, em] = e.time.split(':').map(Number);
+      const eDec = eh + em / 60;
+      const diff = eDec - nowDec;
+      return diff > 0 && diff <= 1;
+    });
+
+    for (const e of upcoming) {
+      const key = day + '_' + e.time + '_' + e.event;
+      if (this._sentNewsWarnings.has(key)) continue;
+      this._sentNewsWarnings.add(key);
+      await Telegram.sendUpcomingNews(1);
+      this._log('CMD', 'NewsBot', `🚨 เตือนข่าวก่อน 1 ชม: ${e.event}`);
+      break; // ส่งครั้งเดียวต่อรอบ
+    }
   },
 
   async _loadMTF() {

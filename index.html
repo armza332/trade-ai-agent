@@ -70,6 +70,7 @@
   </div>
 
   <div class="header-right">
+    <button class="hdr-btn" onclick="Modal.open('backtest')" title="ทดสอบ strategy บนข้อมูลย้อนหลัง">🔬 BACKTEST</button>
     <button class="hdr-btn" onclick="Modal.open('journal')" title="ประวัติการเทรด">📓 JOURNAL</button>
     <button class="hdr-btn" onclick="Modal.open('help')" title="วิธีใช้งาน">❓ HELP</button>
     <button class="hdr-btn" onclick="Modal.open('settings')" title="ตั้งค่า Telegram + Alert">⚙ SETTINGS</button>
@@ -209,6 +210,12 @@
           <input id="s-sound" type="checkbox" checked> เปิดเสียง alert
         </label>
       </div>
+      <div class="form-row">
+        <label class="form-checkbox">
+          <input id="s-keepalive" type="checkbox" checked> 🔋 Keep-Alive (ป้องกัน tab sleep)
+        </label>
+        <button class="btn btn-secondary" style="padding:4px 8px;font-size:6px" onclick="KeepAlive.requestNotifPerm().then(p => { const s = document.getElementById('s-status'); s.textContent = '🔔 Notification: ' + p; s.style.color = p === 'granted' ? 'var(--green)' : 'var(--orange)'; })">🔔 ขอ Notif Permission</button>
+      </div>
 
       <div class="form-group">
         <label class="form-label">🎯 Trade Mode <span class="hint">(ปรับ TP/SL ตามสไตล์)</span></label>
@@ -251,6 +258,7 @@
       <div id="s-status" class="form-status"></div>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="Modal.testTelegram()">🧪 ทดสอบส่ง</button>
+        <button class="btn btn-secondary" onclick="Telegram.sendDailyNews().then(r => { const s = document.getElementById('s-status'); s.textContent = r?.ok ? '✓ ส่งข่าววันนี้แล้ว' : '✗ ' + (r?.msg || 'error'); s.style.color = r?.ok ? 'var(--green)' : 'var(--red)'; })">📰 ส่งข่าววันนี้</button>
         <button class="btn btn-primary" onclick="Modal.saveSettings()">💾 บันทึก</button>
       </div>
       <div class="px-divider"></div>
@@ -282,6 +290,19 @@
           <li>กรอก Chat ID → ติ๊ก "เปิด Telegram" → กด ทดสอบส่ง</li>
         </ol>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ BACKTEST MODAL ═══════════════════ -->
+<div id="modal-backtest" class="modal" style="display:none">
+  <div class="modal-box modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">🔬 BACKTEST — ทดสอบ Strategy บน History</div>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div class="modal-body" id="backtest-body">
+      <div style="padding:20px;text-align:center;font-size:7px;color:var(--gray)">Loading...</div>
     </div>
   </div>
 </div>
@@ -385,6 +406,7 @@
 <script src="js/agents.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/extras.js"></script>
+<script src="js/backtest.js"></script>
 <script src="js/app.js"></script>
 
 </body>

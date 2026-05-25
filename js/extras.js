@@ -147,6 +147,7 @@ const Settings = {
     enablePattern:   true,
     enableNews:      true,
     enableMTF:       true,
+    keepAlive:       true,    // wake lock + browser notification
   },
 
   load() {
@@ -206,6 +207,129 @@ const Telegram = {
 
   async _send(msg) {
     return this._onAppsScript() ? this._sendViaAppsScript(msg) : this._sendViaFetch(msg);
+  },
+
+  // ── Thai translation of economic events ──
+  _thaiEvents: {
+    'USD Core PCE m/m':             'USD เงินเฟ้อ Core PCE รายเดือน',
+    'USD Initial Jobless Claims':    'USD ผู้ขอสวัสดิการว่างงานครั้งแรก',
+    'USD GDP q/q Second Estimate':   'USD GDP รายไตรมาส (ครั้งที่ 2)',
+    'USD Non-Farm Payrolls':         'USD การจ้างงานนอกภาคเกษตร (NFP) ⭐',
+    'USD Unemployment Rate':         'USD อัตราว่างงาน',
+    'USD ISM Manufacturing':         'USD ISM ภาคการผลิต',
+    'USD JOLTS Job Openings':        'USD ตำแหน่งงานว่าง (JOLTS)',
+    'USD FOMC Minutes':              'USD รายงานการประชุม FOMC ⭐',
+    'USD ADP Employment':            'USD การจ้างงาน ADP',
+    'USD Consumer Sentiment':        'USD ความเชื่อมั่นผู้บริโภค',
+    'EUR CPI y/y Flash':             'EUR เงินเฟ้อ CPI รายปี (Flash)',
+    'EUR ECB Rate Decision':         'EUR ECB ประกาศอัตราดอกเบี้ย ⭐',
+    'GBP BoE Rate Decision':         'GBP BoE ประกาศอัตราดอกเบี้ย',
+    'GBP Manufacturing PMI':         'GBP PMI ภาคการผลิต',
+    'AUD RBA Rate Statement':        'AUD RBA แถลงนโยบายอัตราดอกเบี้ย',
+    'AUD RBA Meeting Minutes':       'AUD รายงานการประชุม RBA',
+    'AUD CPI q/q':                   'AUD เงินเฟ้อ CPI รายไตรมาส',
+    'AUD Retail Sales':              'AUD ยอดค้าปลีก',
+    'XAU/Gold Technical Support':    'XAU แนวรับเชิงเทคนิคของทอง',
+  },
+
+  _impactThai: { high: '🔴 สำคัญมาก', medium: '🟡 ปานกลาง', low: '🟢 ผลน้อย' },
+  _biasThai:   {
+    bullish: '📈 หนุน', bearish: '📉 กด',
+    hawkish: '🦅 hawkish', dovish: '🕊 dovish',
+    neutral: '⚪ กลาง',
+  },
+
+  /** ส่งสรุปข่าวประจำวันเป็นภาษาไทย */
+  async sendDailyNews() {
+    if (!Settings.get('telegramOn') && !this._onAppsScript()) return { ok:false, msg:'Telegram ปิดอยู่' };
+
+    // รวม events จาก calendar ของ NewsAgent
+    const day = new Date().getUTCDay();
+    const dayName = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'][day];
+
+    if (day === 0 || day === 6) {
+      const msg = `📰 <b>ข่าวเศรษฐกิจวัน${dayName}</b>\n\n💤 ตลาดปิด (สุดสัปดาห์)\nไม่มี high-impact news`;
+      const r = await this._send(msg);
+      return r;
+    }
+
+    const newsAgent = new NewsAgent('ALL', ['XAU', 'USD', 'AUD', 'EUR', 'GBP']);
+    const all = newsAgent._calendar();
+
+    // กรองตาม symbols ที่ user เปิด
+    const enabledCurrencies = ['USD']; // USD เกี่ยวข้องเสมอ
+    if (Settings.get('enableXAU', true)) enabledCurrencies.push('XAU');
+    if (Settings.get('enableAUD', true)) enabledCurrencies.push('AUD');
+    if (Settings.get('enableEUR', true)) enabledCurrencies.push('EUR');
+
+    const relevant = all.filter(e => enabledCurrencies.some(p => e.curr.includes(p)));
+
+    if (relevant.length === 0) {
+      const msg = `📰 <b>ข่าวเศรษฐกิจวัน${dayName}</b>\n\n✅ ไม่มีข่าวสำคัญสำหรับคู่ที่คุณติดตาม`;
+      return await this._send(msg);
+    }
+
+    // จัด format
+    let msg = `📰 <b>ข่าวเศรษฐกิจวัน${dayName}</b>\n`;
+    msg += `<i>ส่งผลกับ: ${enabledCurrencies.join(', ')}</i>\n`;
+    msg += `${'─'.repeat(28)}\n\n`;
+
+    relevant.forEach(e => {
+      const eventThai = this._thaiEvents[e.event] || e.event;
+      const impactThai = this._impactThai[e.impact] || e.impact;
+      const biasThai   = this._biasThai[e.bias] || e.bias;
+
+      msg += `${impactThai}  <b>${e.time} UTC</b>\n`;
+      msg += `📌 ${eventThai}\n`;
+      msg += `   ${biasThai} ${e.curr}\n\n`;
+    });
+
+    msg += `${'─'.repeat(28)}\n`;
+    msg += `⚠️ <i>แนะนำเลี่ยงเทรด 30 นาทีก่อน/หลังข่าว 🔴 สำคัญมาก</i>\n`;
+    msg += `🕐 ${new Date().toLocaleString('th-TH')}`;
+
+    return await this._send(msg);
+  },
+
+  /** ส่งข่าวเฉพาะ event ที่จะมาภายใน X ชม.ข้างหน้า */
+  async sendUpcomingNews(hoursAhead = 1) {
+    if (!Settings.get('telegramOn') && !this._onAppsScript()) return;
+
+    const day = new Date().getUTCDay();
+    if (day === 0 || day === 6) return;
+
+    const newsAgent = new NewsAgent('ALL', ['XAU', 'USD', 'AUD', 'EUR', 'GBP']);
+    const all = newsAgent._calendar();
+    const nowHour = new Date().getUTCHours();
+    const nowMin  = new Date().getUTCMinutes();
+    const nowDecimal = nowHour + nowMin / 60;
+
+    const enabledCurr = ['USD'];
+    if (Settings.get('enableXAU', true)) enabledCurr.push('XAU');
+    if (Settings.get('enableAUD', true)) enabledCurr.push('AUD');
+    if (Settings.get('enableEUR', true)) enabledCurr.push('EUR');
+
+    const upcoming = all.filter(e => {
+      if (!enabledCurr.some(p => e.curr.includes(p))) return false;
+      const [eh, em] = e.time.split(':').map(Number);
+      const eDecimal = eh + em / 60;
+      const diff = eDecimal - nowDecimal;
+      return diff > 0 && diff <= hoursAhead && e.impact === 'high';
+    });
+
+    if (upcoming.length === 0) return;
+
+    let msg = `🚨 <b>เตือนข่าว ${hoursAhead} ชม. ข้างหน้า!</b>\n\n`;
+    upcoming.forEach(e => {
+      const eventThai = this._thaiEvents[e.event] || e.event;
+      const biasThai  = this._biasThai[e.bias] || e.bias;
+      msg += `🔴 <b>${e.time} UTC</b>\n`;
+      msg += `   ${eventThai}\n`;
+      msg += `   ${biasThai} ${e.curr}\n\n`;
+    });
+    msg += `⚠️ <i>เตรียม spread กว้าง — ระวัง slippage</i>`;
+
+    return await this._send(msg);
   },
 
   /** Test bot connection */
@@ -290,6 +414,9 @@ const Modal = {
     if (name === 'journal' && typeof Journal !== 'undefined') {
       document.getElementById('journal-body').innerHTML = Journal.render();
     }
+    if (name === 'backtest' && typeof Backtest !== 'undefined') {
+      document.getElementById('backtest-body').innerHTML = Backtest.renderUI();
+    }
   },
   close() {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -310,6 +437,7 @@ const Modal = {
     const ea = document.getElementById('s-enableAUD'); if (ea) ea.checked = Settings.get('enableAUD', true);
     const ee = document.getElementById('s-enableEUR'); if (ee) ee.checked = Settings.get('enableEUR', true);
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
+    const ka = document.getElementById('s-keepalive'); if (ka) ka.checked = Settings.get('keepAlive', true);
     // Analyst toggles
     ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
@@ -332,6 +460,12 @@ const Modal = {
     const ea = document.getElementById('s-enableAUD');    if (ea) Settings.set('enableAUD', ea.checked);
     const ee = document.getElementById('s-enableEUR');    if (ee) Settings.set('enableEUR', ee.checked);
     const ag = document.getElementById('s-adxgate');      if (ag) Settings.set('adxGate', Math.max(0, Math.min(50, parseInt(ag.value) || 0)));
+    const ka = document.getElementById('s-keepalive');    if (ka) {
+      Settings.set('keepAlive', ka.checked);
+      if (typeof KeepAlive !== 'undefined') {
+        if (ka.checked) KeepAlive.enable(); else KeepAlive.disable();
+      }
+    }
     // Analyst toggles
     ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
@@ -669,6 +803,85 @@ Journal.add = function(cmd, grade) {
   }
 };
 
+/* ═══════════════════════════════════════════════════════
+   KEEP-ALIVE — Wake Lock + Browser Notifications
+   ป้องกัน tab sleep + ส่ง native notification เสริม Telegram
+   ═══════════════════════════════════════════════════════ */
+const KeepAlive = {
+  wakeLock: null,
+  enabled: false,
+
+  async enable() {
+    this.enabled = true;
+    // 1. Wake Lock — ห้ามจอดับ (รองรับ Chrome/Edge/Safari mobile)
+    //    หมายเหตุ: ต้องเรียกหลัง user gesture ครั้งแรก → ครั้งแรกอาจ silently fail
+    try {
+      if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        this.wakeLock.addEventListener('release', () => {
+          if (this.enabled) setTimeout(() => this.enable(), 1000);
+        });
+      }
+    } catch (e) { /* user denied or unsupported */ }
+
+    // 2. Re-acquire wake lock เมื่อกลับมา foreground
+    if (!this._visBound) {
+      this._visBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (this.enabled && document.visibilityState === 'visible' && !this.wakeLock) {
+          this.enable();
+        }
+      });
+    }
+    return true;
+  },
+
+  /** Request notification permission (must be called from user click) */
+  async requestNotifPerm() {
+    if (!('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'granted') return 'granted';
+    try {
+      return await Notification.requestPermission();
+    } catch (e) { return 'denied'; }
+  },
+
+  disable() {
+    this.enabled = false;
+    if (this.wakeLock) {
+      this.wakeLock.release();
+      this.wakeLock = null;
+    }
+  },
+
+  /** Show browser notification (เสริมจาก Telegram) */
+  notify(title, body, opts = {}) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    try {
+      const n = new Notification(title, {
+        body,
+        icon: opts.icon || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjMGEwYTBmIi8+PHRleHQgeD0iMzIiIHk9IjQ0IiBmb250LXNpemU9IjQ4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjZmZkNzAwIj7ihLk8L3RleHQ+PC9zdmc+',
+        badge: opts.badge,
+        tag: opts.tag || 'twr-signal',
+        requireInteraction: opts.requireInteraction ?? false,
+        silent: opts.silent ?? false,
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+      setTimeout(() => n.close(), 10000);
+    } catch (e) { /* silent */ }
+  },
+
+  status() {
+    return {
+      wakeLockSupported: 'wakeLock' in navigator,
+      wakeLockActive:    !!this.wakeLock && !this.wakeLock.released,
+      notifPermission:   'Notification' in window ? Notification.permission : 'unsupported',
+      enabled:           this.enabled,
+    };
+  },
+};
+
+window.KeepAlive    = KeepAlive;
 window.SignalGrade  = SignalGrade;
 window.Settings     = Settings;
 window.Telegram     = Telegram;
