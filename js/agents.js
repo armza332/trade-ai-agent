@@ -265,22 +265,61 @@ class NewsAgent extends BaseAgent {
     this.pairs = pairs; // e.g. ['XAU','USD'] or ['AUD','EUR','USD']
   }
 
-  _generateEvents() {
-    const now  = new Date();
-    const base = [
-      { time: '08:30', event: 'USD Core PCE m/m',          impact: 'high',   bias: 'bearish', curr: 'USD' },
-      { time: '09:00', event: 'EUR CPI y/y Flash',          impact: 'high',   bias: 'bullish', curr: 'EUR' },
-      { time: '10:00', event: 'GBP Manufacturing PMI',      impact: 'medium', bias: 'neutral', curr: 'GBP' },
-      { time: '12:30', event: 'USD Initial Jobless Claims',  impact: 'high',   bias: 'neutral', curr: 'USD' },
-      { time: '14:00', event: 'AUD RBA Meeting Minutes',     impact: 'high',   bias: 'hawkish', curr: 'AUD' },
-      { time: '15:30', event: 'USD GDP q/q Second Estimate', impact: 'high',   bias: 'bullish', curr: 'USD' },
-      { time: '17:00', event: 'EUR ECB Rate Decision',       impact: 'high',   bias: 'bearish', curr: 'EUR' },
-      { time: '21:30', event: 'AUD CPI q/q',                 impact: 'high',   bias: 'neutral', curr: 'AUD' },
-      { time: '23:00', event: 'XAU/Gold Technical Support',  impact: 'medium', bias: 'bullish', curr: 'XAU' },
-    ];
+  // ── Day-of-week aware calendar — varies by weekday so it doesn't show the
+  //    same events every day. Real solution would be ForexFactory webhook.
+  _calendar() {
+    const day = new Date().getUTCDay(); // 0=Sun..6=Sat
+    const calendar = {
+      1: [ // Monday
+        { time: '01:30', event: 'AUD Retail Sales',           impact: 'medium', bias: 'neutral', curr: 'AUD' },
+        { time: '14:00', event: 'USD ISM Manufacturing',       impact: 'high',   bias: 'bullish', curr: 'USD' },
+      ],
+      2: [ // Tuesday
+        { time: '01:30', event: 'AUD RBA Rate Statement',      impact: 'high',   bias: 'hawkish', curr: 'AUD' },
+        { time: '14:00', event: 'USD JOLTS Job Openings',       impact: 'high',   bias: 'neutral', curr: 'USD' },
+      ],
+      3: [ // Wednesday
+        { time: '09:00', event: 'EUR CPI y/y Flash',            impact: 'high',   bias: 'bullish', curr: 'EUR' },
+        { time: '12:15', event: 'USD ADP Employment',           impact: 'medium', bias: 'neutral', curr: 'USD' },
+        { time: '18:00', event: 'USD FOMC Minutes',             impact: 'high',   bias: 'bearish', curr: 'USD' },
+      ],
+      4: [ // Thursday
+        { time: '11:00', event: 'GBP BoE Rate Decision',        impact: 'high',   bias: 'neutral', curr: 'GBP' },
+        { time: '12:30', event: 'USD Initial Jobless Claims',    impact: 'high',   bias: 'neutral', curr: 'USD' },
+        { time: '12:45', event: 'EUR ECB Rate Decision',         impact: 'high',   bias: 'bearish', curr: 'EUR' },
+      ],
+      5: [ // Friday
+        { time: '12:30', event: 'USD Non-Farm Payrolls',         impact: 'high',   bias: 'bullish', curr: 'USD' },
+        { time: '12:30', event: 'USD Unemployment Rate',         impact: 'high',   bias: 'neutral', curr: 'USD' },
+        { time: '14:00', event: 'USD Consumer Sentiment',        impact: 'medium', bias: 'neutral', curr: 'USD' },
+      ],
+      0: [ /* Sunday — markets mostly closed */ ],
+      6: [ /* Saturday — markets closed */ ],
+    };
+    return calendar[day] || [];
+  }
 
-    // Filter by relevant currencies for this team
-    return base.filter(e => this.pairs.some(p => e.curr.includes(p))).slice(0, 4);
+  _generateEvents() {
+    const now    = new Date();
+    const hUtc   = now.getUTCHours();
+    const day    = now.getUTCDay();
+
+    // No events on weekends (markets closed)
+    if (day === 0 || day === 6) return [];
+
+    const todays = this._calendar();
+
+    // Filter:
+    //   1) only events RELEVANT to this team's pairs
+    //   2) only events within ±6 hours of current UTC time (recent or upcoming)
+    const filtered = todays.filter(e => {
+      if (!this.pairs.some(p => e.curr.includes(p))) return false;
+      const [eh] = e.time.split(':').map(Number);
+      const diff = Math.abs(eh - hUtc);
+      return diff <= 6 || diff >= 18; // within 6h either direction (wraps midnight)
+    });
+
+    return filtered.slice(0, 4);
   }
 
   analyze() {
@@ -495,10 +534,23 @@ class Commander {
   }
 
   decide(goldReport, currReport) {
-    const goldConf  = goldReport.head.conf;
-    const currConf  = currReport.head.conf;
-    const goldSig   = goldReport.head.signal;
-    const currSig   = currReport.head.signal;
+    let goldConf  = goldReport.head.conf;
+    let currConf  = currReport.head.conf;
+    let goldSig   = goldReport.head.signal;
+    let currSig   = currReport.head.signal;
+
+    // ── ADX gate: ในตลาด sideway (ADX ต่ำ) ลด confidence + ห้าม buy/sell signal ──
+    const adxGate = (typeof Settings !== 'undefined') ? Settings.get('adxGate', 20) : 20;
+    if (adxGate > 0) {
+      const goldADX = parseFloat((goldReport.agents.rsi.report.adx + '').split(' ')[0]) || 25;
+      const audADX  = parseFloat((currReport.aud?.agents?.rsi?.report.adx + '').split(' ')[0]) || 25;
+      if (goldADX < adxGate && (goldSig === 'buy' || goldSig === 'sell')) {
+        goldSig = 'watch'; goldConf = Math.min(goldConf, 50);
+      }
+      if (audADX < adxGate && (currSig === 'buy' || currSig === 'sell')) {
+        currSig = 'watch'; currConf = Math.min(currConf, 50);
+      }
+    }
 
     // Pick highest-confidence actionable signal
     let primary = null;
