@@ -89,18 +89,18 @@ const TradingWarRoom = {
     // Log significant changes
     this._logAgentUpdates(goldR, fxR, cmdR);
 
-    // Flash + sound + telegram on strong signal
-    if (gradeInfo.alert) {
-      const banner = document.getElementById('alert-banner');
-      if (banner && this._lastGrade !== gradeInfo.grade) {
-        SignalGrade.playSound(gradeInfo);
-        Telegram.notify(cmdR, gradeInfo);
-        UI.addLog('CMD', 'Commander', `🚨 GRADE ${gradeInfo.grade} — ${cmdR.signal.toUpperCase()} ${cmdR.sym} @ ${cmdR.entry}`);
-      }
-      this._lastGrade = gradeInfo.grade;
-    } else {
-      this._lastGrade = null;
+    // Telegram: ส่งทุก buy/sell signal — Telegram.notify เช็ค minGrade เอง
+    if ((cmdR.signal === 'buy' || cmdR.signal === 'sell') && this._lastGrade !== gradeInfo.grade) {
+      Telegram.notify(cmdR, gradeInfo);
+      UI.addLog('CMD', 'Commander', `📤 GRADE ${gradeInfo.grade} — ${cmdR.signal.toUpperCase()} ${cmdR.sym} @ ${cmdR.entry}`);
     }
+
+    // Banner + เสียง: เฉพาะ A/S+ (high-confidence visual alert)
+    if (gradeInfo.alert && this._lastGrade !== gradeInfo.grade) {
+      SignalGrade.playSound(gradeInfo);
+    }
+
+    this._lastGrade = gradeInfo.grade;
 
     if (cmdR.signal === 'buy' || cmdR.signal === 'sell') {
       const cmdEl = document.getElementById('commander-panel');
