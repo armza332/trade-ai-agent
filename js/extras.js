@@ -146,6 +146,7 @@ const Settings = {
     enablePivot:     false,   // off by default — overlaps with Fib S/R
     enablePattern:   true,
     enableNews:      true,
+    enableMTF:       true,
   },
 
   load() {
@@ -310,7 +311,7 @@ const Modal = {
     const ee = document.getElementById('s-enableEUR'); if (ee) ee.checked = Settings.get('enableEUR', true);
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
@@ -332,7 +333,7 @@ const Modal = {
     const ee = document.getElementById('s-enableEUR');    if (ee) Settings.set('enableEUR', ee.checked);
     const ag = document.getElementById('s-adxgate');      if (ag) Settings.set('adxGate', Math.max(0, Math.min(50, parseInt(ag.value) || 0)));
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) Settings.set('enable' + name, el.checked);
     });
@@ -423,6 +424,8 @@ const Journal = {
     if (pnl != null)   e.pnl = pnl;
     if (notes != null) e.notes = notes;
     this.save(entries);
+    // Adaptive learning — update agent scores
+    if (typeof AgentScores !== 'undefined') AgentScores.update(e);
   },
 
   remove(id) {
@@ -502,7 +505,9 @@ const Journal = {
       <div style="margin-top:10px;display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="Journal.exportCSV()">📥 Export CSV</button>
         <button class="btn btn-secondary" onclick="if(confirm('ลบประวัติทั้งหมด?')){Journal.clear();Modal.open('journal');}">🗑 Clear All</button>
-      </div>`;
+      </div>
+      ${(typeof AgentScores !== 'undefined') ? AgentScores.render() : ''}
+      `;
   },
 
   markWin(id)  { const r = prompt('กำไรกี่ R? (เช่น 1.5)', '1');   if (r !== null) { this.setOutcome(id, 'win', parseFloat(r) || 1); Modal.open('journal'); } },
@@ -524,6 +529,110 @@ const Journal = {
     a.download = `trading-journal-${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  },
+};
+
+/* ═══════════════════════════════════════════════════════
+   AGENT SCORES — Adaptive learning from Journal outcomes
+   Tracks each agent's prediction accuracy; agents that
+   consistently predict correct direction get higher weight
+   in the HeadAgent aggregation.
+   ═══════════════════════════════════════════════════════ */
+const AgentScores = {
+  KEY: 'twr_agent_scores',
+  MIN_TRADES: 5, // ต้องเทรดถึง 5 ครั้งก่อน weight จะ kick in
+
+  load() {
+    try { return JSON.parse(localStorage.getItem(this.KEY) || '{}'); }
+    catch { return {}; }
+  },
+
+  save(scores) { localStorage.setItem(this.KEY, JSON.stringify(scores)); },
+
+  /** Called from Journal.setOutcome — update each agent's record */
+  update(entry) {
+    if (!entry.agentVotes || entry.outcome === 'pending') return;
+    const scores = this.load();
+    const won = entry.outcome === 'win';
+    const r   = parseFloat(entry.pnl) || (won ? 1 : entry.outcome === 'loss' ? -1 : 0);
+
+    entry.agentVotes.forEach(v => {
+      if (!v || !v.agent) return;
+      if (!scores[v.agent]) scores[v.agent] = { trades: 0, wins: 0, losses: 0, totalR: 0 };
+      const s = scores[v.agent];
+      s.trades++;
+      const agreed = v.signal === entry.signal;
+      if (agreed) {
+        if (won)               { s.wins++;   s.totalR += r; }
+        else if (!won && r < 0){ s.losses++; s.totalR += r; }
+        else                   { /* breakeven */            }
+      } else {
+        // Agent disagreed with the final signal direction
+        if (!won && r < 0)     { s.wins++;   s.totalR += -r; } // correct to disagree
+        else if (won)          { s.losses++; s.totalR += -r; }
+      }
+    });
+    this.save(scores);
+  },
+
+  /** Weight multiplier for an agent (default 1.0, range 0.3-2.0) */
+  weight(agentName) {
+    const s = this.load()[agentName];
+    if (!s || s.trades < this.MIN_TRADES) return 1.0;
+    const acc = s.wins / s.trades;
+    // 50% acc = 1.0x, 70% = 1.4x, 30% = 0.6x — capped
+    return Math.max(0.3, Math.min(2.0, 1.0 + (acc - 0.5) * 2));
+  },
+
+  /** All agents sorted by trades count */
+  stats() {
+    const scores = this.load();
+    return Object.entries(scores).map(([name, s]) => ({
+      name,
+      trades:   s.trades,
+      wins:     s.wins,
+      losses:   s.losses,
+      accuracy: s.trades > 0 ? Math.round(s.wins / s.trades * 100) : 0,
+      totalR:   s.totalR.toFixed(2),
+      weight:   this.weight(name).toFixed(2),
+    })).sort((a, b) => b.trades - a.trades);
+  },
+
+  /** Render UI panel for inclusion in Journal modal */
+  render() {
+    const s = this.stats();
+    if (s.length === 0) {
+      return '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูลทาย — บันทึกผลใน Journal ก่อน (min ' + this.MIN_TRADES + ' trades/agent)</div>';
+    }
+    const rows = s.map(a => {
+      const accCls = a.accuracy >= 60 ? 'text-green' : a.accuracy >= 40 ? 'text-yellow' : 'text-red';
+      const wCls   = parseFloat(a.weight) >= 1.2 ? 'text-green' : parseFloat(a.weight) <= 0.8 ? 'text-red' : 'text-gray';
+      const enough = a.trades >= this.MIN_TRADES;
+      return `<tr>
+        <td class="text-teal">${a.name}</td>
+        <td>${a.trades}</td>
+        <td class="text-green">${a.wins}</td>
+        <td class="text-red">${a.losses}</td>
+        <td class="${accCls}">${a.accuracy}%</td>
+        <td>${a.totalR}R</td>
+        <td class="${wCls}">${enough ? a.weight + 'x' : '<span style="color:var(--gray)">—</span>'}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">🧠 AGENT SCORES — Adaptive Learning</div>
+      <div style="font-size:6px;color:var(--gray);padding:4px 0">Agent ที่ accuracy สูง → weight เพิ่ม → vote มีน้ำหนักมากขึ้นใน HeadAgent. ต้อง ≥${this.MIN_TRADES} trades ถึง weight kick in</div>
+      <div class="j-table-wrap" style="max-height:180px">
+        <table class="j-table">
+          <thead><tr>
+            <th>Agent</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>Total R</th><th>Weight</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:6px">
+        <button class="btn btn-secondary" onclick="if(confirm('Reset all agent scores?')){AgentScores.save({});Modal.open('journal');}">🔄 Reset Scores</button>
+      </div>
+    `;
   },
 };
 
@@ -560,8 +669,9 @@ Journal.add = function(cmd, grade) {
   }
 };
 
-window.SignalGrade = SignalGrade;
-window.Settings    = Settings;
-window.Telegram    = Telegram;
-window.Modal       = Modal;
-window.Journal     = Journal;
+window.SignalGrade  = SignalGrade;
+window.Settings     = Settings;
+window.Telegram     = Telegram;
+window.Modal        = Modal;
+window.Journal      = Journal;
+window.AgentScores  = AgentScores;

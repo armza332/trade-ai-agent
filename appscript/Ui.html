@@ -181,6 +181,14 @@ const UI = {
         { l:'Lower Wick', v: agents.pattern.report.lowerWick ?? '--' },
       ]);
     }
+    if (agents.mtf) {
+      extraCards += this.analystCard('⏰', 'Multi-TF', agents.mtf.signal, [
+        { l:'1h Trend',  v: agents.mtf.report.tf1h ?? '--' },
+        { l:'4h Trend',  v: agents.mtf.report.tf4h ?? '--' },
+        { l:'Daily',     v: agents.mtf.report.tfDay ?? '--' },
+        { l:'Alignment', v: agents.mtf.report.alignment ?? '--', c: agents.mtf.report.alignment?.includes('All')?'up':'warn' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}

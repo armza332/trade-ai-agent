@@ -505,6 +505,72 @@ class PatternAgent extends BaseAgent {
 }
 
 /* ═══════════════════════════════════════════════════════
+   MTF ANALYST — Multi-Timeframe Alignment (1h + 4h + Daily)
+   อ่าน trend จากแต่ละ TF ที่ market.js cache ไว้
+   ═══════════════════════════════════════════════════════ */
+class MTFAgent extends BaseAgent {
+  constructor(team, symbol) {
+    super('MTF', 'Multi-Timeframe Trend', '⏰', team);
+    this.symbol = symbol;
+  }
+
+  analyze(data, market) {
+    if (!market || !market.getMTF) return { signal:'wait', conf:30, report:{note:'No MTF data'}, log:'No MTF' };
+    const mtf = market.getMTF(this.symbol);
+    const tfs = ['1h', '4h', '1day'];
+    const states = {};
+    let bulls = 0, bears = 0, total = 0;
+
+    tfs.forEach(tf => {
+      if (mtf[tf]) {
+        states[tf] = mtf[tf].trend;
+        if (mtf[tf].trend === 'bull') bulls++; else bears++;
+        total++;
+      } else {
+        states[tf] = '?';
+      }
+    });
+
+    let score = 0;
+    if (total === 0) {
+      this.signal = 'wait';
+      this.conf   = 30;
+      this.report = { ...states, alignment: 'No data' };
+      this.lastLog = 'MTF: No data yet';
+      return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+    }
+
+    // Pure bull or pure bear = strongest
+    if (bulls === total)      score = 40;
+    else if (bears === total) score = -40;
+    else if (bulls > bears)   score = 15;
+    else if (bears > bulls)   score = -15;
+
+    // Daily TF gets extra weight if aligned with majority
+    if (mtf['1day'] && total >= 2) {
+      if (mtf['1day'].trend === 'bull' && bulls >= bears) score += 5;
+      if (mtf['1day'].trend === 'bear' && bears >= bulls) score -= 5;
+    }
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score));
+
+    const align = bulls === total ? '🟢 All BULL' :
+                  bears === total ? '🔴 All BEAR' :
+                  '⚠️ Mixed';
+
+    this.report = {
+      tf1h:   states['1h']   === 'bull' ? '🟢 BULL' : states['1h']   === 'bear' ? '🔴 BEAR' : '— Loading',
+      tf4h:   states['4h']   === 'bull' ? '🟢 BULL' : states['4h']   === 'bear' ? '🔴 BEAR' : '— Loading',
+      tfDay:  states['1day'] === 'bull' ? '🟢 BULL' : states['1day'] === 'bear' ? '🔴 BEAR' : '— Loading',
+      alignment: align,
+    };
+    this.lastLog = `MTF 1h:${states['1h']} 4h:${states['4h']} D:${states['1day']} | ${align}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    NEWS ANALYST — Economic Calendar Simulation
    ═══════════════════════════════════════════════════════ */
 class NewsAgent extends BaseAgent {
@@ -671,6 +737,7 @@ class GoldTeam {
     this.bollinger = new BollingerAgent('GOLD');
     this.pivot     = new PivotAgent('GOLD');
     this.pattern   = new PatternAgent('GOLD');
+    this.mtf       = new MTFAgent('GOLD', 'XAUUSD');
     this.news      = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
@@ -678,18 +745,32 @@ class GoldTeam {
     return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
   }
 
-  analyze(data) {
+  /** Apply adaptive weight from AgentScores to an agent's report */
+  _applyWeight(report, agentName) {
+    if (typeof AgentScores === 'undefined' || !report) return report;
+    const w = AgentScores.weight(agentName);
+    if (w !== 1.0) {
+      report.conf      = Math.max(20, Math.min(95, Math.round(report.conf * w)));
+      report.weightMul = w;
+    }
+    return report;
+  }
+
+  analyze(data, market) {
     const agents = {};
     const reports = [];
-    if (this._on('enableSMC',       true)) { agents.smc       = this.smc.analyze(data);       reports.push(agents.smc); }
-    if (this._on('enableElliott',   true)) { agents.elliott   = this.elliott.analyze(data);   reports.push(agents.elliott); }
-    if (this._on('enableFib',       true)) { agents.fib       = this.fib.analyze(data);       reports.push(agents.fib); }
-    if (this._on('enableRSI',       true)) { agents.rsi       = this.rsi.analyze(data);       reports.push(agents.rsi); }
-    if (this._on('enableMACD',      true)) { agents.macd      = this.macd.analyze(data);      reports.push(agents.macd); }
-    if (this._on('enableBollinger', true)) { agents.bollinger = this.bollinger.analyze(data); reports.push(agents.bollinger); }
-    if (this._on('enablePivot',     false)){ agents.pivot     = this.pivot.analyze(data);     reports.push(agents.pivot); }
-    if (this._on('enablePattern',   true)) { agents.pattern   = this.pattern.analyze(data);   reports.push(agents.pattern); }
-    if (this._on('enableNews',      true)) { agents.news      = this.news.analyze();          reports.push(agents.news); }
+    const wt = (r, name) => this._applyWeight(r, name);
+
+    if (this._on('enableSMC',       true)) { agents.smc       = wt(this.smc.analyze(data),       'Gold-SMC');       reports.push(agents.smc); }
+    if (this._on('enableElliott',   true)) { agents.elliott   = wt(this.elliott.analyze(data),   'Gold-Elliott');   reports.push(agents.elliott); }
+    if (this._on('enableFib',       true)) { agents.fib       = wt(this.fib.analyze(data),       'Gold-Fib');       reports.push(agents.fib); }
+    if (this._on('enableRSI',       true)) { agents.rsi       = wt(this.rsi.analyze(data),       'Gold-RSI');       reports.push(agents.rsi); }
+    if (this._on('enableMACD',      true)) { agents.macd      = wt(this.macd.analyze(data),      'Gold-MACD');      reports.push(agents.macd); }
+    if (this._on('enableBollinger', true)) { agents.bollinger = wt(this.bollinger.analyze(data), 'Gold-Bollinger'); reports.push(agents.bollinger); }
+    if (this._on('enablePivot',     false)){ agents.pivot     = wt(this.pivot.analyze(data),     'Gold-Pivot');     reports.push(agents.pivot); }
+    if (this._on('enablePattern',   true)) { agents.pattern   = wt(this.pattern.analyze(data),   'Gold-Pattern');   reports.push(agents.pattern); }
+    if (this._on('enableMTF',       true) && market) { agents.mtf = wt(this.mtf.analyze(data, market), 'Gold-MTF'); reports.push(agents.mtf); }
+    if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
     const agg = this.head.aggregate(reports);
 
@@ -724,6 +805,7 @@ class CurrencyTeam {
       bollinger: new BollingerAgent('AUDUSD'),
       pivot:     new PivotAgent('AUDUSD'),
       pattern:   new PatternAgent('AUDUSD'),
+      mtf:       new MTFAgent('AUDUSD', 'AUDUSD'),
     };
 
     // EURUSD sub-analysts
@@ -737,6 +819,7 @@ class CurrencyTeam {
       bollinger: new BollingerAgent('EURUSD'),
       pivot:     new PivotAgent('EURUSD'),
       pattern:   new PatternAgent('EURUSD'),
+      mtf:       new MTFAgent('EURUSD', 'EURUSD'),
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -754,23 +837,36 @@ class CurrencyTeam {
     return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
   }
 
-  _analyzePair(pair, data) {
+  _applyWeight(report, agentName) {
+    if (typeof AgentScores === 'undefined' || !report) return report;
+    const w = AgentScores.weight(agentName);
+    if (w !== 1.0) {
+      report.conf      = Math.max(20, Math.min(95, Math.round(report.conf * w)));
+      report.weightMul = w;
+    }
+    return report;
+  }
+
+  _analyzePair(pair, data, prefix, market) {
     const agents = {};
     const reports = [];
-    if (this._on('enableSMC',       true)) { agents.smc       = pair.smc.analyze(data);       reports.push(agents.smc); }
-    if (this._on('enableElliott',   true)) { agents.elliott   = pair.elliott.analyze(data);   reports.push(agents.elliott); }
-    if (this._on('enableFib',       true)) { agents.fib       = pair.fib.analyze(data);       reports.push(agents.fib); }
-    if (this._on('enableRSI',       true)) { agents.rsi       = pair.rsi.analyze(data);       reports.push(agents.rsi); }
-    if (this._on('enableMACD',      true)) { agents.macd      = pair.macd.analyze(data);      reports.push(agents.macd); }
-    if (this._on('enableBollinger', true)) { agents.bollinger = pair.bollinger.analyze(data); reports.push(agents.bollinger); }
-    if (this._on('enablePivot',     false)){ agents.pivot     = pair.pivot.analyze(data);     reports.push(agents.pivot); }
-    if (this._on('enablePattern',   true)) { agents.pattern   = pair.pattern.analyze(data);   reports.push(agents.pattern); }
+    const wt = (r, name) => this._applyWeight(r, prefix + '-' + name);
+
+    if (this._on('enableSMC',       true)) { agents.smc       = wt(pair.smc.analyze(data),       'SMC');       reports.push(agents.smc); }
+    if (this._on('enableElliott',   true)) { agents.elliott   = wt(pair.elliott.analyze(data),   'Elliott');   reports.push(agents.elliott); }
+    if (this._on('enableFib',       true)) { agents.fib       = wt(pair.fib.analyze(data),       'Fib');       reports.push(agents.fib); }
+    if (this._on('enableRSI',       true)) { agents.rsi       = wt(pair.rsi.analyze(data),       'RSI');       reports.push(agents.rsi); }
+    if (this._on('enableMACD',      true)) { agents.macd      = wt(pair.macd.analyze(data),      'MACD');      reports.push(agents.macd); }
+    if (this._on('enableBollinger', true)) { agents.bollinger = wt(pair.bollinger.analyze(data), 'Bollinger'); reports.push(agents.bollinger); }
+    if (this._on('enablePivot',     false)){ agents.pivot     = wt(pair.pivot.analyze(data),     'Pivot');     reports.push(agents.pivot); }
+    if (this._on('enablePattern',   true)) { agents.pattern   = wt(pair.pattern.analyze(data),   'Pattern');   reports.push(agents.pattern); }
+    if (this._on('enableMTF',       true) && market) { agents.mtf = wt(pair.mtf.analyze(data, market), 'MTF'); reports.push(agents.mtf); }
     return { agents, agg: pair.head.aggregate(reports) };
   }
 
-  analyze(audData, eurData) {
-    const audRes = this._analyzePair(this.aud, audData);
-    const eurRes = this._analyzePair(this.eur, eurData);
+  analyze(audData, eurData, market) {
+    const audRes = this._analyzePair(this.aud, audData, 'AUD', market);
+    const eurRes = this._analyzePair(this.eur, eurData, 'EUR', market);
     const audAgg = audRes.agg;
     const eurAgg = eurRes.agg;
     const newsR  = this._on('enableNews', true) ? this.news.analyze() : { signal:'wait', conf:50, report:{events:[]} };

@@ -150,6 +150,26 @@ class MarketEngine {
     return true;
   }
 
+  /** Multi-timeframe cache — populated by app.js, read by MTFAgent */
+  _mtfData = { XAUUSD: {}, AUDUSD: {}, EURUSD: {} };
+
+  applyMTF(symbol, tf, candles) {
+    if (!candles || candles.length < 20) return;
+    const closes = candles.map(c => c.close);
+    const ema20  = TA.ema(closes, 20);
+    const ema50  = TA.ema(closes, Math.min(50, closes.length));
+    this._mtfData[symbol] = this._mtfData[symbol] || {};
+    this._mtfData[symbol][tf] = {
+      close: closes.at(-1),
+      ema20: ema20.at(-1),
+      ema50: ema50.at(-1),
+      trend: closes.at(-1) > ema20.at(-1) ? 'bull' : 'bear',
+      strong: Math.abs(closes.at(-1) - ema20.at(-1)) > Math.abs(ema20.at(-1) - ema50.at(-1)),
+    };
+  }
+
+  getMTF(symbol) { return this._mtfData[symbol] || {}; }
+
   /** Apply real prices — adjust simulator base + latest candle */
   applyRealPrices(prices) {
     Object.keys(prices).forEach(sym => {

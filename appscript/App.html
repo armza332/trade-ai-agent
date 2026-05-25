@@ -71,9 +71,9 @@ const TradingWarRoom = {
     const audData  = this.market.getData('AUDUSD');
     const eurData  = this.market.getData('EURUSD');
 
-    // Run teams
-    const goldR = this.goldTeam.analyze(goldData);
-    const fxR   = this.fxTeam.analyze(audData, eurData);
+    // Run teams (pass market so MTF agent can access cached MTF data)
+    const goldR = this.goldTeam.analyze(goldData, this.market);
+    const fxR   = this.fxTeam.analyze(audData, eurData, this.market);
     const cmdR  = this.commander.decide(goldR, fxR);
 
     // Grade the signal
@@ -171,6 +171,32 @@ const TradingWarRoom = {
         }
       } catch (e) { /* silent */ }
     }
+
+    // Load MTF candles too (1h, 4h, Daily) — populates market._mtfData
+    await this._loadMTF();
+  },
+
+  async _loadMTF() {
+    if (!Settings.get('enableMTF', true)) return;
+    if (!Settings.get('priceFeedOn'))     return;
+    const onApps = this.market._onAppsScript();
+    const key    = Settings.get('priceApiKey');
+    if (!onApps && !key) return;
+
+    const TFs = ['1h', '4h', '1day'];
+    for (const sym of ['XAUUSD', 'AUDUSD', 'EURUSD']) {
+      for (const tf of TFs) {
+        try {
+          const h = await this.market.fetchHistory(sym, tf, 60, key);
+          if (h && h.length >= 20) {
+            this.market.applyMTF(sym, tf, h);
+          }
+        } catch (e) { /* silent */ }
+        // Small delay to avoid hitting Twelve Data 8 req/min limit
+        await new Promise(r => setTimeout(r, 400));
+      }
+    }
+    this._log('CMD', 'DataLoader', `⏰ Loaded MTF candles (1h+4h+D) for all symbols`);
   },
 
   async _realPriceLoop() {
