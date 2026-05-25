@@ -885,5 +885,64 @@ body::after {
   text-align: center;
 }
 
+/* ═══════════════════ TRADE JOURNAL ═══════════════════ */
+.modal-xl { max-width: 1100px; }
+
+.journal-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.js-tile {
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  padding: 8px 6px;
+  text-align: center;
+  color: var(--white);
+}
+.js-num { font-size: 14px; line-height: 1.2; }
+.js-lbl { font-size: 6px; color: var(--gray); margin-top: 4px; }
+
+.j-table-wrap {
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  max-height: 360px;
+  overflow-y: auto;
+}
+.j-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 6px;
+}
+.j-table th {
+  background: var(--bg-card);
+  color: var(--gold);
+  padding: 6px 4px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  border-bottom: 1px solid var(--border);
+}
+.j-table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--white);
+}
+.j-row:hover { background: rgba(255,255,255,0.03); }
+
+.j-mini-btn {
+  font-family: var(--pixel-font);
+  font-size: 6px;
+  width: 16px;
+  height: 16px;
+  background: var(--bg-dark);
+  border: 1px solid currentColor;
+  cursor: pointer;
+  margin: 0 1px;
+  padding: 0;
+}
+.j-mini-btn:hover { background: rgba(255,255,255,0.05); }
+
 
 </style>

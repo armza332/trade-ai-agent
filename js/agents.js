@@ -257,6 +257,254 @@ class RSIValueAgent extends BaseAgent {
 }
 
 /* ═══════════════════════════════════════════════════════
+   MACD ANALYST — Momentum & Trend Crossover
+   ═══════════════════════════════════════════════════════ */
+class MACDAgent extends BaseAgent {
+  constructor(team) {
+    super('MACD', 'Momentum Crossover', '📈', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    const closes = candles.map(c => c.close);
+    if (closes.length < 30) return { signal:'wait', conf:30, report:{}, log:'Insufficient data' };
+
+    const ema12  = TA.ema(closes, 12);
+    const ema26  = TA.ema(closes, 26);
+    const macd   = ema12.map((v, i) => v - ema26[i]);
+    const signal = TA.ema(macd, 9);
+    const hist   = macd.map((v, i) => v - signal[i]);
+
+    const latestH = hist.at(-1);
+    const prevH   = hist.at(-2);
+    const latestM = macd.at(-1);
+
+    const bullCross = prevH < 0 && latestH > 0;
+    const bearCross = prevH > 0 && latestH < 0;
+    const rising    = latestH > prevH;
+    const aboveZero = latestM > 0;
+
+    let score = 0;
+    if (bullCross)              score += 30;
+    if (bearCross)              score -= 30;
+    if (rising  && aboveZero)   score += 15;
+    if (!rising && !aboveZero)  score -= 15;
+    if (latestM > 0 && rising)  score += 5;
+    if (latestM < 0 && !rising) score -= 5;
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : Math.abs(score) < 8 ? 'wait' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 0.7);
+
+    const d = cfg.digits - 1;
+    this.report = {
+      macd:      latestM.toFixed(d + 2),
+      signal:    signal.at(-1).toFixed(d + 2),
+      histogram: latestH.toFixed(d + 2),
+      cross:     bullCross ? '🟢 Bull Cross' : bearCross ? '🔴 Bear Cross' : '○ No cross',
+      momentum:  rising ? '▲ Rising' : '▼ Falling',
+    };
+    this.lastLog = `MACD ${rising?'rising':'falling'} hist=${latestH.toFixed(d+2)} ${bullCross?'| BULL CROSS':bearCross?'| BEAR CROSS':''}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   BOLLINGER BANDS ANALYST — Volatility & Mean Reversion
+   ═══════════════════════════════════════════════════════ */
+class BollingerAgent extends BaseAgent {
+  constructor(team) {
+    super('Bollinger', 'BB Volatility & Squeeze', '🎈', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    const closes = candles.map(c => c.close);
+    if (closes.length < 40) return { signal:'wait', conf:30, report:{}, log:'Insufficient data' };
+
+    const period = 20;
+    const slice  = closes.slice(-period);
+    const sma    = slice.reduce((a,b) => a+b, 0) / period;
+    const stdev  = Math.sqrt(slice.reduce((s, v) => s + (v-sma)**2, 0) / period);
+    const upper  = sma + stdev * 2;
+    const lower  = sma - stdev * 2;
+    const last   = closes.at(-1);
+    const bandwidth = (upper - lower) / sma * 100;
+
+    // Compare current bandwidth to recent — squeeze detection
+    const bw5  = [];
+    for (let i = 5; i > 0; i--) {
+      const s = closes.slice(-period - i + 1, -i + 1 || undefined);
+      if (s.length < period) continue;
+      const m = s.reduce((a,b) => a+b, 0) / s.length;
+      const sd = Math.sqrt(s.reduce((acc, v) => acc + (v-m)**2, 0) / s.length);
+      bw5.push((m + sd*2 - (m - sd*2)) / m * 100);
+    }
+    const avgBW = bw5.length ? bw5.reduce((a,b) => a+b, 0) / bw5.length : bandwidth;
+    const squeeze   = bandwidth < avgBW * 0.7;
+    const expanding = bandwidth > avgBW * 1.3;
+
+    let score = 0;
+    if (last > upper)  score -= 15; // overbought → mean revert
+    if (last < lower)  score += 15; // oversold → mean revert
+    if (squeeze)       score *= 0.5; // squeeze = wait for breakout
+    if (expanding && last > sma) score += 10;
+    if (expanding && last < sma) score -= 10;
+
+    this.signal = score >= 15 ? 'buy' : score <= -15 ? 'sell' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 1.1);
+
+    const d = cfg.digits - 1;
+    const pos = last > upper ? '⚠️ Above Upper' :
+                last < lower ? '⚠️ Below Lower' :
+                last > sma   ? '↑ Upper half'   : '↓ Lower half';
+
+    this.report = {
+      upper:     upper.toFixed(d),
+      sma:       sma.toFixed(d),
+      lower:     lower.toFixed(d),
+      bandwidth: bandwidth.toFixed(2) + '%',
+      state:     squeeze ? '⚡ Squeeze' : expanding ? '🌊 Expanding' : '○ Normal',
+      position:  pos,
+    };
+    this.lastLog = `BB ${pos} | BW ${bandwidth.toFixed(2)}%${squeeze?' (SQUEEZE)':expanding?' (EXPANDING)':''}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   PIVOT POINTS ANALYST — Classical S/R levels
+   ═══════════════════════════════════════════════════════ */
+class PivotAgent extends BaseAgent {
+  constructor(team) {
+    super('Pivot', 'Pivot S/R Levels', '🏛', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (candles.length < 24) return { signal:'wait', conf:30, report:{}, log:'Need session data' };
+
+    // Use last 24 candles (≈2h on 5m) as "previous session"
+    const sess = candles.slice(-25, -1);
+    const high = Math.max(...sess.map(c => c.high));
+    const low  = Math.min(...sess.map(c => c.low));
+    const close = sess.at(-1).close;
+
+    const pp = (high + low + close) / 3;
+    const r1 = 2*pp - low;
+    const s1 = 2*pp - high;
+    const r2 = pp + (high - low);
+    const s2 = pp - (high - low);
+    const r3 = high + 2 * (pp - low);
+    const s3 = low - 2 * (high - pp);
+
+    const last = candles.at(-1).close;
+    const tol  = cfg.atr * 0.4;
+
+    const levels = [
+      { lvl: r3, name: 'R3', isResist: true,  weight: 1.5 },
+      { lvl: r2, name: 'R2', isResist: true,  weight: 1.2 },
+      { lvl: r1, name: 'R1', isResist: true,  weight: 1.0 },
+      { lvl: pp, name: 'PP', isResist: null,  weight: 0.5 },
+      { lvl: s1, name: 'S1', isResist: false, weight: 1.0 },
+      { lvl: s2, name: 'S2', isResist: false, weight: 1.2 },
+      { lvl: s3, name: 'S3', isResist: false, weight: 1.5 },
+    ];
+
+    let score = 0, nearest = 'mid';
+    for (const L of levels) {
+      if (Math.abs(last - L.lvl) < tol) {
+        nearest = L.name;
+        if (L.isResist === true)  score -= 20 * L.weight;
+        if (L.isResist === false) score += 20 * L.weight;
+        break;
+      }
+    }
+    if (nearest === 'mid') {
+      if (last > pp) { score += 5; nearest = 'above PP'; }
+      else           { score -= 5; nearest = 'below PP'; }
+    }
+
+    this.signal = score >= 15 ? 'buy' : score <= -15 ? 'sell' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 0.6);
+
+    const d = cfg.digits - 1;
+    this.report = {
+      pp:   pp.toFixed(d),
+      r1:   r1.toFixed(d),
+      s1:   s1.toFixed(d),
+      r2:   r2.toFixed(d),
+      s2:   s2.toFixed(d),
+      near: nearest,
+    };
+    this.lastLog = `Pivot: ${nearest} | PP ${pp.toFixed(d)}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   PATTERN ANALYST — Candlestick Pattern Recognition
+   ═══════════════════════════════════════════════════════ */
+class PatternAgent extends BaseAgent {
+  constructor(team) {
+    super('Pattern', 'Candlestick Patterns', '🕯', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (candles.length < 4) return { signal:'wait', conf:30, report:{}, log:'Insufficient' };
+
+    const last3 = candles.slice(-3);
+    const c0 = last3[0], c1 = last3[1], c2 = last3[2];
+
+    const body   = c => Math.abs(c.close - c.open);
+    const range  = c => c.high - c.low;
+    const upper  = c => c.high - Math.max(c.open, c.close);
+    const lower  = c => Math.min(c.open, c.close) - c.low;
+    const isBull = c => c.close > c.open;
+    const isBear = c => c.close < c.open;
+
+    let pattern = 'No pattern', score = 0;
+
+    // Bullish Engulfing
+    if (isBear(c1) && isBull(c2) && c2.open <= c1.close && c2.close >= c1.open && body(c2) > body(c1) * 1.2) {
+      pattern = '🟢 Bullish Engulfing'; score = 28;
+    }
+    // Bearish Engulfing
+    else if (isBull(c1) && isBear(c2) && c2.open >= c1.close && c2.close <= c1.open && body(c2) > body(c1) * 1.2) {
+      pattern = '🔴 Bearish Engulfing'; score = -28;
+    }
+    // Hammer (bullish reversal after downtrend)
+    else if (lower(c2) > body(c2) * 2 && upper(c2) < body(c2) * 0.5 && (isBear(c0) || isBear(c1))) {
+      pattern = '🔨 Hammer'; score = 22;
+    }
+    // Shooting Star (bearish reversal after uptrend)
+    else if (upper(c2) > body(c2) * 2 && lower(c2) < body(c2) * 0.5 && (isBull(c0) || isBull(c1))) {
+      pattern = '⭐ Shooting Star'; score = -22;
+    }
+    // Morning Star (3-candle bullish reversal)
+    else if (isBear(c0) && body(c1) < body(c0) * 0.4 && isBull(c2) && c2.close > (c0.open + c0.close) / 2) {
+      pattern = '🌅 Morning Star'; score = 30;
+    }
+    // Evening Star (3-candle bearish reversal)
+    else if (isBull(c0) && body(c1) < body(c0) * 0.4 && isBear(c2) && c2.close < (c0.open + c0.close) / 2) {
+      pattern = '🌇 Evening Star'; score = -30;
+    }
+    // Doji (indecision)
+    else if (body(c2) < range(c2) * 0.1) {
+      pattern = '✤ Doji'; score = 0;
+    }
+
+    this.signal = score >= 15 ? 'buy' : score <= -15 ? 'sell' : Math.abs(score) < 8 ? 'wait' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 1.2);
+
+    this.report = {
+      pattern,
+      bodyPct:  (body(c2) / Math.max(0.0001, range(c2)) * 100).toFixed(0) + '%',
+      upperWick: upper(c2).toFixed(cfg.digits - 1),
+      lowerWick: lower(c2).toFixed(cfg.digits - 1),
+    };
+    this.lastLog = `Pattern: ${pattern}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    NEWS ANALYST — Economic Calendar Simulation
    ═══════════════════════════════════════════════════════ */
 class NewsAgent extends BaseAgent {
@@ -406,7 +654,7 @@ class HeadAgent extends BaseAgent {
 }
 
 /* ═══════════════════════════════════════════════════════
-   GOLD TEAM — XAUUSD
+   GOLD TEAM — XAUUSD (with toggleable analysts)
    ═══════════════════════════════════════════════════════ */
 class GoldTeam {
   constructor() {
@@ -414,32 +662,41 @@ class GoldTeam {
     this.symbol  = 'XAUUSD';
     this.icon    = '🥇';
     this.color   = 'gold';
-    this.head    = new HeadAgent('Maj.Gold', 'GOLD', 'XAUUSD');
-    this.smc     = new SMCAgent('GOLD');
-    this.elliott = new ElliottWaveAgent('GOLD');
-    this.fib     = new FibonacciAgent('GOLD');
-    this.rsi     = new RSIValueAgent('GOLD');
-    this.news    = new NewsAgent('GOLD', ['XAU', 'USD']);
+    this.head      = new HeadAgent('Maj.Gold', 'GOLD', 'XAUUSD');
+    this.smc       = new SMCAgent('GOLD');
+    this.elliott   = new ElliottWaveAgent('GOLD');
+    this.fib       = new FibonacciAgent('GOLD');
+    this.rsi       = new RSIValueAgent('GOLD');
+    this.macd      = new MACDAgent('GOLD');
+    this.bollinger = new BollingerAgent('GOLD');
+    this.pivot     = new PivotAgent('GOLD');
+    this.pattern   = new PatternAgent('GOLD');
+    this.news      = new NewsAgent('GOLD', ['XAU', 'USD']);
+  }
 
-    this.head.addAnalyst(this.smc);
-    this.head.addAnalyst(this.elliott);
-    this.head.addAnalyst(this.fib);
-    this.head.addAnalyst(this.rsi);
+  _on(key, def = true) {
+    return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
   }
 
   analyze(data) {
-    const smcR = this.smc.analyze(data);
-    const ewR  = this.elliott.analyze(data);
-    const fibR = this.fib.analyze(data);
-    const rsiR = this.rsi.analyze(data);
-    const newsR= this.news.analyze();
+    const agents = {};
+    const reports = [];
+    if (this._on('enableSMC',       true)) { agents.smc       = this.smc.analyze(data);       reports.push(agents.smc); }
+    if (this._on('enableElliott',   true)) { agents.elliott   = this.elliott.analyze(data);   reports.push(agents.elliott); }
+    if (this._on('enableFib',       true)) { agents.fib       = this.fib.analyze(data);       reports.push(agents.fib); }
+    if (this._on('enableRSI',       true)) { agents.rsi       = this.rsi.analyze(data);       reports.push(agents.rsi); }
+    if (this._on('enableMACD',      true)) { agents.macd      = this.macd.analyze(data);      reports.push(agents.macd); }
+    if (this._on('enableBollinger', true)) { agents.bollinger = this.bollinger.analyze(data); reports.push(agents.bollinger); }
+    if (this._on('enablePivot',     false)){ agents.pivot     = this.pivot.analyze(data);     reports.push(agents.pivot); }
+    if (this._on('enablePattern',   true)) { agents.pattern   = this.pattern.analyze(data);   reports.push(agents.pattern); }
+    if (this._on('enableNews',      true)) { agents.news      = this.news.analyze();          reports.push(agents.news); }
 
-    const agg  = this.head.aggregate([smcR, ewR, fibR, rsiR, newsR]);
+    const agg = this.head.aggregate(reports);
 
     return {
       team: this.name, symbol: this.symbol, icon: this.icon, color: this.color,
       head: { signal: agg.signal, conf: agg.conf, votes: agg.votes },
-      agents: { smc: smcR, elliott: ewR, fib: fibR, rsi: rsiR, news: newsR },
+      agents,
       price: data.price,
       cfg:   data.cfg,
     };
@@ -458,20 +715,28 @@ class CurrencyTeam {
 
     // AUDUSD sub-analysts
     this.aud = {
-      head:    new HeadAgent('Lt.AUD', 'AUDUSD', 'AUDUSD'),
-      smc:     new SMCAgent('AUDUSD'),
-      elliott: new ElliottWaveAgent('AUDUSD'),
-      fib:     new FibonacciAgent('AUDUSD'),
-      rsi:     new RSIValueAgent('AUDUSD'),
+      head:      new HeadAgent('Lt.AUD', 'AUDUSD', 'AUDUSD'),
+      smc:       new SMCAgent('AUDUSD'),
+      elliott:   new ElliottWaveAgent('AUDUSD'),
+      fib:       new FibonacciAgent('AUDUSD'),
+      rsi:       new RSIValueAgent('AUDUSD'),
+      macd:      new MACDAgent('AUDUSD'),
+      bollinger: new BollingerAgent('AUDUSD'),
+      pivot:     new PivotAgent('AUDUSD'),
+      pattern:   new PatternAgent('AUDUSD'),
     };
 
     // EURUSD sub-analysts
     this.eur = {
-      head:    new HeadAgent('Lt.EUR', 'EURUSD', 'EURUSD'),
-      smc:     new SMCAgent('EURUSD'),
-      elliott: new ElliottWaveAgent('EURUSD'),
-      fib:     new FibonacciAgent('EURUSD'),
-      rsi:     new RSIValueAgent('EURUSD'),
+      head:      new HeadAgent('Lt.EUR', 'EURUSD', 'EURUSD'),
+      smc:       new SMCAgent('EURUSD'),
+      elliott:   new ElliottWaveAgent('EURUSD'),
+      fib:       new FibonacciAgent('EURUSD'),
+      rsi:       new RSIValueAgent('EURUSD'),
+      macd:      new MACDAgent('EURUSD'),
+      bollinger: new BollingerAgent('EURUSD'),
+      pivot:     new PivotAgent('EURUSD'),
+      pattern:   new PatternAgent('EURUSD'),
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -485,22 +750,30 @@ class CurrencyTeam {
     });
   }
 
+  _on(key, def = true) {
+    return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
+  }
+
+  _analyzePair(pair, data) {
+    const agents = {};
+    const reports = [];
+    if (this._on('enableSMC',       true)) { agents.smc       = pair.smc.analyze(data);       reports.push(agents.smc); }
+    if (this._on('enableElliott',   true)) { agents.elliott   = pair.elliott.analyze(data);   reports.push(agents.elliott); }
+    if (this._on('enableFib',       true)) { agents.fib       = pair.fib.analyze(data);       reports.push(agents.fib); }
+    if (this._on('enableRSI',       true)) { agents.rsi       = pair.rsi.analyze(data);       reports.push(agents.rsi); }
+    if (this._on('enableMACD',      true)) { agents.macd      = pair.macd.analyze(data);      reports.push(agents.macd); }
+    if (this._on('enableBollinger', true)) { agents.bollinger = pair.bollinger.analyze(data); reports.push(agents.bollinger); }
+    if (this._on('enablePivot',     false)){ agents.pivot     = pair.pivot.analyze(data);     reports.push(agents.pivot); }
+    if (this._on('enablePattern',   true)) { agents.pattern   = pair.pattern.analyze(data);   reports.push(agents.pattern); }
+    return { agents, agg: pair.head.aggregate(reports) };
+  }
+
   analyze(audData, eurData) {
-    // AUD analysis
-    const audSMC = this.aud.smc.analyze(audData);
-    const audEW  = this.aud.elliott.analyze(audData);
-    const audFib = this.aud.fib.analyze(audData);
-    const audRSI = this.aud.rsi.analyze(audData);
-    const audAgg = this.aud.head.aggregate([audSMC, audEW, audFib, audRSI]);
-
-    // EUR analysis
-    const eurSMC = this.eur.smc.analyze(eurData);
-    const eurEW  = this.eur.elliott.analyze(eurData);
-    const eurFib = this.eur.fib.analyze(eurData);
-    const eurRSI = this.eur.rsi.analyze(eurData);
-    const eurAgg = this.eur.head.aggregate([eurSMC, eurEW, eurFib, eurRSI]);
-
-    const newsR = this.news.analyze();
+    const audRes = this._analyzePair(this.aud, audData);
+    const eurRes = this._analyzePair(this.eur, eurData);
+    const audAgg = audRes.agg;
+    const eurAgg = eurRes.agg;
+    const newsR  = this._on('enableNews', true) ? this.news.analyze() : { signal:'wait', conf:50, report:{events:[]} };
 
     // Overall team decision (best opportunity between AUD and EUR)
     const combined = this.head.aggregate([
@@ -515,10 +788,8 @@ class CurrencyTeam {
     return {
       team: this.name, symbols: this.symbols, icon: this.icon, color: this.color,
       head:   { signal: combined.signal, conf: combined.conf, votes: combined.votes, leadPair },
-      aud:    { signal: audAgg.signal, conf: audAgg.conf, votes: audAgg.votes, price: audData.price, cfg: audData.cfg,
-                agents: { smc: audSMC, elliott: audEW, fib: audFib, rsi: audRSI } },
-      eur:    { signal: eurAgg.signal, conf: eurAgg.conf, votes: eurAgg.votes, price: eurData.price, cfg: eurData.cfg,
-                agents: { smc: eurSMC, elliott: eurEW, fib: eurFib, rsi: eurRSI } },
+      aud:    { signal: audAgg.signal, conf: audAgg.conf, votes: audAgg.votes, price: audData.price, cfg: audData.cfg, agents: audRes.agents },
+      eur:    { signal: eurAgg.signal, conf: eurAgg.conf, votes: eurAgg.votes, price: eurData.price, cfg: eurData.cfg, agents: eurRes.agents },
       news:   newsR,
     };
   }

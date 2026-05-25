@@ -51,6 +51,38 @@ function fetchRealPrices() {
   }
 }
 
+// ═══════════════════ HISTORY FETCH (Twelve Data /time_series) ═══════════════════
+function fetchHistory(symbol, interval, size) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('PRICE_API_KEY');
+  if (!apiKey || apiKey.indexOf('PUT_') === 0) return null;
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = `HIST_${symbol}_${interval}_${size}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  try {
+    const tdSym = symbol.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1/$2');
+    const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${interval || '5min'}&outputsize=${size || 200}&apikey=${encodeURIComponent(apiKey)}`;
+    const r = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const data = JSON.parse(r.getContentText());
+    if (!data.values || data.status === 'error') return null;
+    const candles = data.values.reverse().map(v => ({
+      open:   parseFloat(v.open),
+      high:   parseFloat(v.high),
+      low:    parseFloat(v.low),
+      close:  parseFloat(v.close),
+      volume: parseFloat(v.volume) || 1000,
+      ts:     new Date(v.datetime).getTime(),
+    })).filter(c => isFinite(c.close));
+    // Cache for 5 minutes
+    cache.put(cacheKey, JSON.stringify(candles), 300);
+    return candles;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ═══════════════════ MAIN: SERVE WEBPAGE ═══════════════════
 // MULTI-FILE pattern (Apps Script standard):
 //   Index.html contains <?!= include('Market'); ?> etc.

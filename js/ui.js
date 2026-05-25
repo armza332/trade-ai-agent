@@ -146,15 +146,51 @@ const UI = {
       { l: 'Value Zone', v: agents.rsi.report.pos ?? '--', c: 'info' },
     ];
 
+    // Optional cards (only show if agent was active)
+    let extraCards = '';
+    if (agents.macd) {
+      extraCards += this.analystCard('📈', 'MACD', agents.macd.signal, [
+        { l:'MACD',      v: agents.macd.report.macd ?? '--' },
+        { l:'Signal',    v: agents.macd.report.signal ?? '--' },
+        { l:'Histogram', v: agents.macd.report.histogram ?? '--', c: 'info' },
+        { l:'Cross',     v: agents.macd.report.cross ?? '--', c: agents.macd.report.cross?.includes('Bull')?'up':agents.macd.report.cross?.includes('Bear')?'dn':'' },
+      ]);
+    }
+    if (agents.bollinger) {
+      extraCards += this.analystCard('🎈', 'Bollinger', agents.bollinger.signal, [
+        { l:'Position',  v: agents.bollinger.report.position ?? '--', c: 'info' },
+        { l:'Bandwidth', v: agents.bollinger.report.bandwidth ?? '--' },
+        { l:'State',     v: agents.bollinger.report.state ?? '--', c: agents.bollinger.report.state?.includes('Squeeze')?'warn':'' },
+        { l:'SMA',       v: agents.bollinger.report.sma ?? '--' },
+      ]);
+    }
+    if (agents.pivot) {
+      extraCards += this.analystCard('🏛', 'Pivot', agents.pivot.signal, [
+        { l:'PP',      v: agents.pivot.report.pp ?? '--', c: 'info' },
+        { l:'R1',      v: agents.pivot.report.r1 ?? '--', c: 'dn' },
+        { l:'S1',      v: agents.pivot.report.s1 ?? '--', c: 'up' },
+        { l:'Near',    v: agents.pivot.report.near ?? '--', c: 'warn' },
+      ]);
+    }
+    if (agents.pattern) {
+      extraCards += this.analystCard('🕯', 'Pattern', agents.pattern.signal, [
+        { l:'Pattern',    v: agents.pattern.report.pattern ?? '--', c: 'info' },
+        { l:'Body %',     v: agents.pattern.report.bodyPct ?? '--' },
+        { l:'Upper Wick', v: agents.pattern.report.upperWick ?? '--' },
+        { l:'Lower Wick', v: agents.pattern.report.lowerWick ?? '--' },
+      ]);
+    }
+
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}
       <div class="analyst-grid">
-        ${this.analystCard('⚡', 'SMC Analyst',    agents.smc.signal,     smcMetrics, smcExtra)}
-        ${this.analystCard('🌊', 'Elliott Wave',   agents.elliott.signal, ewMetrics)}
-        ${this.analystCard('📐', 'Fibonacci',      agents.fib.signal,     fibMetrics)}
-        ${this.analystCard('📊', 'RSI / Value',    agents.rsi.signal,     rsiMetrics)}
+        ${agents.smc     ? this.analystCard('⚡', 'SMC Analyst',  agents.smc.signal,     smcMetrics, smcExtra) : ''}
+        ${agents.elliott ? this.analystCard('🌊', 'Elliott Wave', agents.elliott.signal, ewMetrics) : ''}
+        ${agents.fib     ? this.analystCard('📐', 'Fibonacci',    agents.fib.signal,     fibMetrics) : ''}
+        ${agents.rsi     ? this.analystCard('📊', 'RSI / Value',  agents.rsi.signal,     rsiMetrics) : ''}
+        ${extraCards}
       </div>
-      ${this.newsPanel(agents.news)}
+      ${agents.news ? this.newsPanel(agents.news) : ''}
     `;
   },
 

@@ -232,6 +232,21 @@
         <label class="form-label">📈 ADX Gate <span class="hint">(0=ปิด, แนะนำ 20 — ตลาด trend เท่านั้น)</span></label>
         <input id="s-adxgate" type="number" class="form-input" min="0" max="50" value="20">
       </div>
+
+      <div class="form-group">
+        <label class="form-label">👥 Active Analysts <span class="hint">(เลือก agent ที่จะใช้)</span></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px">
+          <label class="form-checkbox"><input id="s-en-SMC"       type="checkbox" checked> ⚡ SMC (Structure/OB/FVG)</label>
+          <label class="form-checkbox"><input id="s-en-Elliott"   type="checkbox" checked> 🌊 Elliott Wave</label>
+          <label class="form-checkbox"><input id="s-en-Fib"       type="checkbox" checked> 📐 Fibonacci</label>
+          <label class="form-checkbox"><input id="s-en-RSI"       type="checkbox" checked> 📊 RSI / Value</label>
+          <label class="form-checkbox"><input id="s-en-MACD"      type="checkbox" checked> 📈 MACD (Momentum)</label>
+          <label class="form-checkbox"><input id="s-en-Bollinger" type="checkbox" checked> 🎈 Bollinger Bands</label>
+          <label class="form-checkbox"><input id="s-en-Pivot"     type="checkbox"> 🏛 Pivot Points</label>
+          <label class="form-checkbox"><input id="s-en-Pattern"   type="checkbox" checked> 🕯 Candle Patterns</label>
+          <label class="form-checkbox"><input id="s-en-News"      type="checkbox" checked> 📰 News Intel</label>
+        </div>
+      </div>
       <div id="s-status" class="form-status"></div>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="Modal.testTelegram()">🧪 ทดสอบส่ง</button>

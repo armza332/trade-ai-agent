@@ -132,6 +132,21 @@ const Settings = {
     priceApiKey:    '',
     priceFeedOn:    false,
     priceRefreshSec: 120,
+    tradeMode:      'swing',  // scalp | swing | position
+    enableXAU:      true,
+    enableAUD:      true,
+    enableEUR:      true,
+    adxGate:        20,       // skip signal if ADX below this (0 = off)
+    // Analyst toggles
+    enableSMC:       true,
+    enableElliott:   true,
+    enableFib:       true,
+    enableRSI:       true,
+    enableMACD:      true,
+    enableBollinger: true,
+    enablePivot:     false,   // off by default — overlaps with Fib S/R
+    enablePattern:   true,
+    enableNews:      true,
   },
 
   load() {
@@ -209,6 +224,12 @@ const Telegram = {
     if (!Settings.get('telegramOn')) return;
     if (cmdReport.signal === 'wait' || cmdReport.signal === 'watch') return;
 
+    // Symbol filter — only notify for symbols the user wants
+    const sym = cmdReport.sym;
+    if (sym === 'XAUUSD' && !Settings.get('enableXAU', true)) return;
+    if (sym === 'AUDUSD' && !Settings.get('enableAUD', true)) return;
+    if (sym === 'EURUSD' && !Settings.get('enableEUR', true)) return;
+
     const minGrade = Settings.get('minGrade', 'A');
     const order    = ['D', 'C', 'B', 'A', 'S+'];
     if (order.indexOf(gradeInfo.grade) < order.indexOf(minGrade)) return;
@@ -266,6 +287,9 @@ const Modal = {
     const el = document.getElementById(`modal-${name}`);
     if (el) el.style.display = 'flex';
     if (name === 'settings') this.fillSettings();
+    if (name === 'journal' && typeof Journal !== 'undefined') {
+      document.getElementById('journal-body').innerHTML = Journal.render();
+    }
   },
   close() {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -281,6 +305,16 @@ const Modal = {
     const pk = document.getElementById('s-pricekey'); if (pk) pk.value = Settings.get('priceApiKey', '');
     const pf = document.getElementById('s-pricefeed'); if (pf) pf.checked = Settings.get('priceFeedOn', false);
     const pr = document.getElementById('s-pricerefresh'); if (pr) pr.value = Settings.get('priceRefreshSec', 120);
+    const tm = document.getElementById('s-trademode'); if (tm) tm.value = Settings.get('tradeMode', 'swing');
+    const ex = document.getElementById('s-enableXAU'); if (ex) ex.checked = Settings.get('enableXAU', true);
+    const ea = document.getElementById('s-enableAUD'); if (ea) ea.checked = Settings.get('enableAUD', true);
+    const ee = document.getElementById('s-enableEUR'); if (ee) ee.checked = Settings.get('enableEUR', true);
+    const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
+    // Analyst toggles
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+      const el = document.getElementById('s-en-' + name);
+      if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
+    });
   },
 
   saveSettings() {
@@ -293,6 +327,16 @@ const Modal = {
     const pk = document.getElementById('s-pricekey');     if (pk) Settings.set('priceApiKey', pk.value.trim());
     const pf = document.getElementById('s-pricefeed');    if (pf) Settings.set('priceFeedOn', pf.checked);
     const pr = document.getElementById('s-pricerefresh'); if (pr) Settings.set('priceRefreshSec', Math.max(60, parseInt(pr.value) || 120));
+    const tm = document.getElementById('s-trademode');    if (tm) Settings.set('tradeMode', tm.value);
+    const ex = document.getElementById('s-enableXAU');    if (ex) Settings.set('enableXAU', ex.checked);
+    const ea = document.getElementById('s-enableAUD');    if (ea) Settings.set('enableAUD', ea.checked);
+    const ee = document.getElementById('s-enableEUR');    if (ee) Settings.set('enableEUR', ee.checked);
+    const ag = document.getElementById('s-adxgate');      if (ag) Settings.set('adxGate', Math.max(0, Math.min(50, parseInt(ag.value) || 0)));
+    // Analyst toggles
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+      const el = document.getElementById('s-en-' + name);
+      if (el) Settings.set('enable' + name, el.checked);
+    });
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -332,9 +376,195 @@ const Modal = {
   },
 };
 
+/* ═══════════════════════════════════════════════════════
+   TRADE JOURNAL — log every signal sent, track wins/losses
+   ═══════════════════════════════════════════════════════ */
+const Journal = {
+  KEY: 'twr_journal',
+
+  load() {
+    try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }
+    catch { return []; }
+  },
+
+  save(entries) { localStorage.setItem(this.KEY, JSON.stringify(entries)); },
+
+  _nextId() { return Date.now() * 1000 + ((this._seq = (this._seq || 0) + 1) % 1000); },
+
+  /** Add a new signal to the journal (called automatically by Telegram.notify) */
+  add(cmdReport, gradeInfo) {
+    const entries = this.load();
+    entries.unshift({
+      id:        this._nextId(),
+      ts:        new Date().toISOString(),
+      grade:     gradeInfo.grade,
+      symbol:    cmdReport.sym,
+      signal:    cmdReport.signal,
+      entry:     cmdReport.entry,
+      sl:        cmdReport.sl,
+      tp1:       cmdReport.tp1,
+      tp2:       cmdReport.tp2,
+      rr:        cmdReport.rr,
+      conf:      cmdReport.conf,
+      mode:      cmdReport.mode || 'Swing',
+      outcome:   'pending', // win | loss | breakeven | pending
+      pnl:       null,      // user fills R-multiple later
+      notes:     '',
+    });
+    // Keep last 200
+    if (entries.length > 200) entries.length = 200;
+    this.save(entries);
+  },
+
+  setOutcome(id, outcome, pnl, notes) {
+    const entries = this.load();
+    const e = entries.find(x => x.id === id);
+    if (!e) return;
+    e.outcome = outcome;
+    if (pnl != null)   e.pnl = pnl;
+    if (notes != null) e.notes = notes;
+    this.save(entries);
+  },
+
+  remove(id) {
+    this.save(this.load().filter(e => e.id !== id));
+  },
+
+  clear() { this.save([]); },
+
+  stats() {
+    const entries = this.load();
+    const closed  = entries.filter(e => e.outcome !== 'pending');
+    const wins    = closed.filter(e => e.outcome === 'win').length;
+    const losses  = closed.filter(e => e.outcome === 'loss').length;
+    const be      = closed.filter(e => e.outcome === 'breakeven').length;
+    const totalR  = closed.reduce((s, e) => s + (parseFloat(e.pnl) || 0), 0);
+    return {
+      total: entries.length,
+      pending: entries.length - closed.length,
+      wins, losses, be,
+      winRate: closed.length > 0 ? Math.round(wins / closed.length * 100) : 0,
+      totalR: totalR.toFixed(2),
+      avgR: closed.length > 0 ? (totalR / closed.length).toFixed(2) : '0.00',
+    };
+  },
+
+  render() {
+    const entries = this.load();
+    const s = this.stats();
+
+    const statsHTML = `
+      <div class="journal-stats">
+        <div class="js-tile"><div class="js-num">${s.total}</div><div class="js-lbl">Total Signals</div></div>
+        <div class="js-tile" style="color:var(--green)"><div class="js-num">${s.wins}</div><div class="js-lbl">Wins</div></div>
+        <div class="js-tile" style="color:var(--red)"><div class="js-num">${s.losses}</div><div class="js-lbl">Losses</div></div>
+        <div class="js-tile" style="color:var(--yellow)"><div class="js-num">${s.be}</div><div class="js-lbl">Breakeven</div></div>
+        <div class="js-tile" style="color:var(--teal)"><div class="js-num">${s.winRate}%</div><div class="js-lbl">Win Rate</div></div>
+        <div class="js-tile" style="color:var(--gold)"><div class="js-num">${s.totalR}R</div><div class="js-lbl">Total P/L</div></div>
+      </div>
+    `;
+
+    const rowsHTML = entries.length === 0
+      ? '<div style="padding:20px;text-align:center;color:var(--gray);font-size:7px">📭 ยังไม่มี signal ที่บันทึก — รอให้ระบบส่ง Telegram ครั้งแรก</div>'
+      : entries.map(e => {
+          const d = new Date(e.ts);
+          const time = `${d.toLocaleDateString()} ${d.toTimeString().slice(0,5)}`;
+          const sigCls = e.signal === 'buy' ? 'text-green' : 'text-red';
+          const outCls = e.outcome === 'win' ? 'text-green' : e.outcome === 'loss' ? 'text-red' : e.outcome === 'breakeven' ? 'text-yellow' : 'text-gray';
+          return `<tr class="j-row" data-id="${e.id}">
+            <td class="text-gray">${time}</td>
+            <td class="text-teal">${e.symbol}</td>
+            <td class="${sigCls}">${e.signal === 'buy' ? '▲' : '▼'} ${e.signal.toUpperCase()}</td>
+            <td class="text-gold">${e.grade}</td>
+            <td>${e.entry}</td>
+            <td class="text-red">${e.sl}</td>
+            <td class="text-green">${e.tp1}</td>
+            <td class="${outCls}">${e.outcome}</td>
+            <td>${e.pnl ?? '-'}R</td>
+            <td>
+              <button onclick="Journal.markWin(${e.id})" class="j-mini-btn text-green">W</button>
+              <button onclick="Journal.markLoss(${e.id})" class="j-mini-btn text-red">L</button>
+              <button onclick="Journal.markBE(${e.id})" class="j-mini-btn text-yellow">B</button>
+              <button onclick="Journal.del(${e.id})" class="j-mini-btn text-gray">✕</button>
+            </td>
+          </tr>`;
+        }).join('');
+
+    return statsHTML + `
+      <div class="j-table-wrap">
+        <table class="j-table">
+          <thead><tr>
+            <th>Time</th><th>Sym</th><th>Side</th><th>Grade</th>
+            <th>Entry</th><th>SL</th><th>TP1</th><th>Outcome</th><th>P/L</th><th>Action</th>
+          </tr></thead>
+          <tbody>${rowsHTML}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Journal.exportCSV()">📥 Export CSV</button>
+        <button class="btn btn-secondary" onclick="if(confirm('ลบประวัติทั้งหมด?')){Journal.clear();Modal.open('journal');}">🗑 Clear All</button>
+      </div>`;
+  },
+
+  markWin(id)  { const r = prompt('กำไรกี่ R? (เช่น 1.5)', '1');   if (r !== null) { this.setOutcome(id, 'win', parseFloat(r) || 1); Modal.open('journal'); } },
+  markLoss(id) { const r = prompt('ขาดทุนกี่ R? (เช่น -1)', '-1'); if (r !== null) { this.setOutcome(id, 'loss', parseFloat(r) || -1); Modal.open('journal'); } },
+  markBE(id)   { this.setOutcome(id, 'breakeven', 0); Modal.open('journal'); },
+  del(id)      { if (confirm('ลบ entry นี้?')) { this.remove(id); Modal.open('journal'); } },
+
+  exportCSV() {
+    const entries = this.load();
+    const headers = ['Time','Symbol','Signal','Grade','Entry','SL','TP1','TP2','RR','Confidence','Mode','Outcome','PnL_R','Notes'];
+    const rows = entries.map(e => [
+      e.ts, e.symbol, e.signal, e.grade, e.entry, e.sl, e.tp1, e.tp2, e.rr, e.conf, e.mode, e.outcome, e.pnl ?? '', e.notes
+    ].map(v => `"${(v + '').replace(/"/g, '""')}"`).join(','));
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `trading-journal-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+};
+
+// Hook journal into Telegram.notify (auto-log every signal sent + capture agent votes)
+const _origNotify = Telegram.notify.bind(Telegram);
+Telegram.notify = async function(cmd, grade) {
+  // Check if would actually send (replicate gate logic for journal)
+  if (Settings.get('telegramOn') && cmd.signal !== 'wait' && cmd.signal !== 'watch') {
+    const minGrade = Settings.get('minGrade', 'A');
+    const order    = ['D', 'C', 'B', 'A', 'S+'];
+    if (order.indexOf(grade.grade) >= order.indexOf(minGrade)) {
+      const sym = cmd.sym;
+      const enabled =
+        (sym === 'XAUUSD' && Settings.get('enableXAU', true)) ||
+        (sym === 'AUDUSD' && Settings.get('enableAUD', true)) ||
+        (sym === 'EURUSD' && Settings.get('enableEUR', true));
+      if (enabled) Journal.add(cmd, grade);
+    }
+  }
+  return _origNotify(cmd, grade);
+};
+
+// Capture agent votes when adding to journal (called from app.js fullUpdate)
+Journal._origAdd = Journal.add;
+Journal.add = function(cmd, grade) {
+  this._origAdd(cmd, grade);
+  // Attach votes to the latest entry
+  if (cmd._agentVotes) {
+    const entries = this.load();
+    if (entries[0]) {
+      entries[0].agentVotes = cmd._agentVotes;
+      this.save(entries);
+    }
+  }
+};
+
 window.SignalGrade = SignalGrade;
 window.Settings    = Settings;
 window.Telegram    = Telegram;
 window.Modal       = Modal;
+window.Journal     = Journal;
 
 </script>

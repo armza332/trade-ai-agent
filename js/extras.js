@@ -136,6 +136,16 @@ const Settings = {
     enableAUD:      true,
     enableEUR:      true,
     adxGate:        20,       // skip signal if ADX below this (0 = off)
+    // Analyst toggles
+    enableSMC:       true,
+    enableElliott:   true,
+    enableFib:       true,
+    enableRSI:       true,
+    enableMACD:      true,
+    enableBollinger: true,
+    enablePivot:     false,   // off by default — overlaps with Fib S/R
+    enablePattern:   true,
+    enableNews:      true,
   },
 
   load() {
@@ -299,6 +309,11 @@ const Modal = {
     const ea = document.getElementById('s-enableAUD'); if (ea) ea.checked = Settings.get('enableAUD', true);
     const ee = document.getElementById('s-enableEUR'); if (ee) ee.checked = Settings.get('enableEUR', true);
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
+    // Analyst toggles
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+      const el = document.getElementById('s-en-' + name);
+      if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
+    });
   },
 
   saveSettings() {
@@ -316,6 +331,11 @@ const Modal = {
     const ea = document.getElementById('s-enableAUD');    if (ea) Settings.set('enableAUD', ea.checked);
     const ee = document.getElementById('s-enableEUR');    if (ee) Settings.set('enableEUR', ee.checked);
     const ag = document.getElementById('s-adxgate');      if (ag) Settings.set('adxGate', Math.max(0, Math.min(50, parseInt(ag.value) || 0)));
+    // Analyst toggles
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','News'].forEach(name => {
+      const el = document.getElementById('s-en-' + name);
+      if (el) Settings.set('enable' + name, el.checked);
+    });
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -507,7 +527,7 @@ const Journal = {
   },
 };
 
-// Hook journal into Telegram.notify (auto-log every signal sent)
+// Hook journal into Telegram.notify (auto-log every signal sent + capture agent votes)
 const _origNotify = Telegram.notify.bind(Telegram);
 Telegram.notify = async function(cmd, grade) {
   // Check if would actually send (replicate gate logic for journal)
@@ -524,6 +544,20 @@ Telegram.notify = async function(cmd, grade) {
     }
   }
   return _origNotify(cmd, grade);
+};
+
+// Capture agent votes when adding to journal (called from app.js fullUpdate)
+Journal._origAdd = Journal.add;
+Journal.add = function(cmd, grade) {
+  this._origAdd(cmd, grade);
+  // Attach votes to the latest entry
+  if (cmd._agentVotes) {
+    const entries = this.load();
+    if (entries[0]) {
+      entries[0].agentVotes = cmd._agentVotes;
+      this.save(entries);
+    }
+  }
 };
 
 window.SignalGrade = SignalGrade;

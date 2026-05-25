@@ -32,6 +32,10 @@ const TradingWarRoom = {
     // Real-price feed loop (separate cadence to respect API rate limits)
     this._realPriceLoop();
 
+    // Real candle HISTORY (much better than simulator — runs once on boot + every hour)
+    this._loadRealHistory();
+    setInterval(() => this._loadRealHistory(), 60 * 60 * 1000);
+
     // Mark live
     document.getElementById('live-status').textContent = 'LIVE';
     this._log('CMD', 'Commander', '🟢 Trading War Room initialized. All agents ONLINE.');
@@ -74,6 +78,24 @@ const TradingWarRoom = {
     // Grade the signal
     const gradeInfo = SignalGrade.grade(cmdR, goldR, fxR);
     cmdR.gradeInfo = gradeInfo;
+
+    // Snapshot ALL agent votes for journal tracking (Phase 2 — adaptive learning data)
+    const snapshot = (label, ag) => ag ? { agent: label, signal: ag.signal, conf: ag.conf } : null;
+    cmdR._agentVotes = [
+      snapshot('Gold-SMC',       goldR.agents.smc),
+      snapshot('Gold-Elliott',   goldR.agents.elliott),
+      snapshot('Gold-Fib',       goldR.agents.fib),
+      snapshot('Gold-RSI',       goldR.agents.rsi),
+      snapshot('Gold-MACD',      goldR.agents.macd),
+      snapshot('Gold-Bollinger', goldR.agents.bollinger),
+      snapshot('Gold-Pivot',     goldR.agents.pivot),
+      snapshot('Gold-Pattern',   goldR.agents.pattern),
+      snapshot('Gold-News',      goldR.agents.news),
+      snapshot('AUD-SMC',        fxR.aud?.agents?.smc),
+      snapshot('AUD-MACD',       fxR.aud?.agents?.macd),
+      snapshot('EUR-SMC',        fxR.eur?.agents?.smc),
+      snapshot('EUR-MACD',       fxR.eur?.agents?.macd),
+    ].filter(Boolean);
 
     // Render UI
     UI.renderGoldTeam(goldR);
@@ -131,6 +153,23 @@ const TradingWarRoom = {
 
   _log(team, agent, msg) {
     UI.addLog(team, agent, msg);
+  },
+
+  async _loadRealHistory() {
+    if (!Settings.get('priceFeedOn')) return;
+    const onApps = this.market._onAppsScript();
+    const key    = Settings.get('priceApiKey');
+    if (!onApps && !key) return;
+
+    for (const sym of ['XAUUSD', 'AUDUSD', 'EURUSD']) {
+      try {
+        const h = await this.market.fetchHistory(sym, '5min', 200, key);
+        if (h && h.length > 50) {
+          this.market.applyHistory(sym, h);
+          this._log('CMD', 'DataLoader', `📊 Loaded ${h.length} real 5m candles for ${sym}`);
+        }
+      } catch (e) { /* silent */ }
+    }
   },
 
   async _realPriceLoop() {

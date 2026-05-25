@@ -70,6 +70,7 @@
   </div>
 
   <div class="header-right">
+    <button class="hdr-btn" onclick="Modal.open('journal')" title="ประวัติการเทรด">📓 JOURNAL</button>
     <button class="hdr-btn" onclick="Modal.open('help')" title="วิธีใช้งาน">❓ HELP</button>
     <button class="hdr-btn" onclick="Modal.open('settings')" title="ตั้งค่า Telegram + Alert">⚙ SETTINGS</button>
     <div class="live-indicator">
@@ -208,6 +209,44 @@
           <input id="s-sound" type="checkbox" checked> เปิดเสียง alert
         </label>
       </div>
+
+      <div class="form-group">
+        <label class="form-label">🎯 Trade Mode <span class="hint">(ปรับ TP/SL ตามสไตล์)</span></label>
+        <select id="s-trademode" class="form-input">
+          <option value="scalp">⚡ Scalp — SL/TP สั้น เข้าเร็วออกเร็ว (15-60 นาที)</option>
+          <option value="swing" selected>🌊 Swing — ถือ 4-12 ชั่วโมง (default)</option>
+          <option value="position">🏔 Position — ถือข้ามวัน หา big move</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">🎯 Symbol Filter <span class="hint">(ส่ง Telegram เฉพาะคู่ที่ติ๊ก)</span></label>
+        <div style="display:flex;gap:14px;padding:6px 4px;flex-wrap:wrap">
+          <label class="form-checkbox"><input id="s-enableXAU" type="checkbox" checked> 🥇 XAUUSD</label>
+          <label class="form-checkbox"><input id="s-enableAUD" type="checkbox" checked> 🇦🇺 AUDUSD</label>
+          <label class="form-checkbox"><input id="s-enableEUR" type="checkbox" checked> 🇪🇺 EURUSD</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📈 ADX Gate <span class="hint">(0=ปิด, แนะนำ 20 — ตลาด trend เท่านั้น)</span></label>
+        <input id="s-adxgate" type="number" class="form-input" min="0" max="50" value="20">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">👥 Active Analysts <span class="hint">(เลือก agent ที่จะใช้)</span></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px">
+          <label class="form-checkbox"><input id="s-en-SMC"       type="checkbox" checked> ⚡ SMC (Structure/OB/FVG)</label>
+          <label class="form-checkbox"><input id="s-en-Elliott"   type="checkbox" checked> 🌊 Elliott Wave</label>
+          <label class="form-checkbox"><input id="s-en-Fib"       type="checkbox" checked> 📐 Fibonacci</label>
+          <label class="form-checkbox"><input id="s-en-RSI"       type="checkbox" checked> 📊 RSI / Value</label>
+          <label class="form-checkbox"><input id="s-en-MACD"      type="checkbox" checked> 📈 MACD (Momentum)</label>
+          <label class="form-checkbox"><input id="s-en-Bollinger" type="checkbox" checked> 🎈 Bollinger Bands</label>
+          <label class="form-checkbox"><input id="s-en-Pivot"     type="checkbox"> 🏛 Pivot Points</label>
+          <label class="form-checkbox"><input id="s-en-Pattern"   type="checkbox" checked> 🕯 Candle Patterns</label>
+          <label class="form-checkbox"><input id="s-en-News"      type="checkbox" checked> 📰 News Intel</label>
+        </div>
+      </div>
       <div id="s-status" class="form-status"></div>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="Modal.testTelegram()">🧪 ทดสอบส่ง</button>
@@ -242,6 +281,19 @@
           <li>กรอก Chat ID → ติ๊ก "เปิด Telegram" → กด ทดสอบส่ง</li>
         </ol>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ JOURNAL MODAL ═══════════════════ -->
+<div id="modal-journal" class="modal" style="display:none">
+  <div class="modal-box modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">📓 TRADE JOURNAL — ประวัติสัญญาณ + ผลลัพธ์</div>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div class="modal-body" id="journal-body">
+      <div style="padding:20px;text-align:center;font-size:7px;color:var(--gray)">Loading...</div>
     </div>
   </div>
 </div>

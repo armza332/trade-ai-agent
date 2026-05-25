@@ -109,6 +109,46 @@ class MarketEngine {
     }
   }
 
+  /** Fetch candle HISTORY (replaces simulator candles entirely) */
+  async fetchHistory(symbol, interval = '5min', size = 200, apiKey = null) {
+    if (this._onAppsScript()) {
+      return new Promise((resolve) => {
+        google.script.run
+          .withSuccessHandler(r => resolve(r || null))
+          .withFailureHandler(() => resolve(null))
+          .fetchHistory(symbol, interval, size);
+      });
+    }
+    if (!apiKey) return null;
+    try {
+      const tdSym = symbol.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1/$2');
+      const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${interval}&outputsize=${size}&apikey=${encodeURIComponent(apiKey)}`;
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!data.values || data.status === 'error') return null;
+      // Twelve Data returns NEWEST first → reverse for chronological order
+      return data.values.reverse().map(v => ({
+        open:   parseFloat(v.open),
+        high:   parseFloat(v.high),
+        low:    parseFloat(v.low),
+        close:  parseFloat(v.close),
+        volume: parseFloat(v.volume) || 1000,
+        ts:     new Date(v.datetime).getTime(),
+      })).filter(c => isFinite(c.close));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Replace simulator candles with real history */
+  applyHistory(symbol, candles) {
+    if (!candles || candles.length === 0) return false;
+    this.candles[symbol] = candles;
+    this.prices[symbol]  = candles[candles.length - 1].close;
+    if (this.symbols[symbol]) this.symbols[symbol].base = this.prices[symbol];
+    return true;
+  }
+
   /** Apply real prices — adjust simulator base + latest candle */
   applyRealPrices(prices) {
     Object.keys(prices).forEach(sym => {
