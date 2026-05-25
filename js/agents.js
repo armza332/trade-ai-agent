@@ -517,10 +517,20 @@ class Commander {
 
     const { sym, signal, conf, price, cfg } = primary;
     const atr   = cfg.atr;
-    const rr    = 1.5 + (conf / 100);
-    const sl    = signal === 'buy'  ? price - atr * 1.5  : price + atr * 1.5;
-    const tp1   = signal === 'buy'  ? price + atr * rr   : price - atr * rr;
-    const tp2   = signal === 'buy'  ? price + atr * rr * 2 : price - atr * rr * 2;
+
+    // Trade mode multipliers — Scalp = quick in/out, Swing = hours, Position = days
+    const mode  = (typeof Settings !== 'undefined') ? Settings.get('tradeMode', 'swing') : 'swing';
+    const MODES = {
+      scalp:    { slMult: 0.5, tpBase: 0.6, label: 'Scalp ⚡' },
+      swing:    { slMult: 1.5, tpBase: 1.5, label: 'Swing 🌊' },
+      position: { slMult: 2.5, tpBase: 2.5, label: 'Position 🏔' },
+    };
+    const m = MODES[mode] || MODES.swing;
+    const rr = m.tpBase + (conf / 100) * 0.5; // confidence boost
+
+    const sl    = signal === 'buy'  ? price - atr * m.slMult  : price + atr * m.slMult;
+    const tp1   = signal === 'buy'  ? price + atr * rr        : price - atr * rr;
+    const tp2   = signal === 'buy'  ? price + atr * rr * 2    : price - atr * rr * 2;
     const posSize = Math.min(2, (conf / 100) * 1.5).toFixed(1);
     const rrRatio = (Math.abs(tp1 - price) / Math.max(0.0001, Math.abs(sl - price))).toFixed(2);
     const d = cfg.digits - 1;
@@ -542,6 +552,7 @@ class Commander {
       tp2:    tp2.toFixed(d),
       rr:     `1:${rrRatio}`,
       pos:    `${posSize}%`,
+      mode:   m.label,
       votes:  allVotes,
       goldSig, goldConf, currSig, currConf,
       summary: signal === 'wait' || signal === 'watch'

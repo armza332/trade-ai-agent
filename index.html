@@ -208,6 +208,15 @@
           <input id="s-sound" type="checkbox" checked> เปิดเสียง alert
         </label>
       </div>
+
+      <div class="form-group">
+        <label class="form-label">🎯 Trade Mode <span class="hint">(ปรับ TP/SL ตามสไตล์)</span></label>
+        <select id="s-trademode" class="form-input">
+          <option value="scalp">⚡ Scalp — SL/TP สั้น เข้าเร็วออกเร็ว (15-60 นาที)</option>
+          <option value="swing" selected>🌊 Swing — ถือ 4-12 ชั่วโมง (default)</option>
+          <option value="position">🏔 Position — ถือข้ามวัน หา big move</option>
+        </select>
+      </div>
       <div id="s-status" class="form-status"></div>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="Modal.testTelegram()">🧪 ทดสอบส่ง</button>

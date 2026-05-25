@@ -131,6 +131,7 @@ const Settings = {
     priceApiKey:    '',
     priceFeedOn:    false,
     priceRefreshSec: 120,
+    tradeMode:      'swing',  // scalp | swing | position
   },
 
   load() {
@@ -280,6 +281,7 @@ const Modal = {
     const pk = document.getElementById('s-pricekey'); if (pk) pk.value = Settings.get('priceApiKey', '');
     const pf = document.getElementById('s-pricefeed'); if (pf) pf.checked = Settings.get('priceFeedOn', false);
     const pr = document.getElementById('s-pricerefresh'); if (pr) pr.value = Settings.get('priceRefreshSec', 120);
+    const tm = document.getElementById('s-trademode'); if (tm) tm.value = Settings.get('tradeMode', 'swing');
   },
 
   saveSettings() {
@@ -292,6 +294,7 @@ const Modal = {
     const pk = document.getElementById('s-pricekey');     if (pk) Settings.set('priceApiKey', pk.value.trim());
     const pf = document.getElementById('s-pricefeed');    if (pf) Settings.set('priceFeedOn', pf.checked);
     const pr = document.getElementById('s-pricerefresh'); if (pr) Settings.set('priceRefreshSec', Math.max(60, parseInt(pr.value) || 120));
+    const tm = document.getElementById('s-trademode');    if (tm) Settings.set('tradeMode', tm.value);
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';

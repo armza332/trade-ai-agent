@@ -251,6 +251,7 @@ const UI = {
           <div class="row"><span class="lbl">TP 2</span><span class="val tp2">${report.tp2}</span></div>
           <div class="row"><span class="lbl">R:R</span><span class="val rr">${report.rr}</span></div>
           <div class="row"><span class="lbl">Position</span><span class="val">${report.pos} of balance</span></div>
+          <div class="row"><span class="lbl">Mode</span><span class="val info">${report.mode ?? 'Swing 🌊'}</span></div>
         </div>
       </div>
 
