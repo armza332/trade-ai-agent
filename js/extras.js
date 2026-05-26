@@ -667,104 +667,257 @@ const Journal = {
 };
 
 /* ═══════════════════════════════════════════════════════
-   AGENT SCORES — Adaptive learning from Journal outcomes
-   Tracks each agent's prediction accuracy; agents that
-   consistently predict correct direction get higher weight
-   in the HeadAgent aggregation.
+   KNOWLEDGE BASE / AGENT SCORES — Regime-aware learning
+   จากทั้ง Journal (live) และ Backtest
+   เก็บสถิติ per-agent แยกตาม:
+     - all (overall)
+     - regime: trending / ranging / volatile
+     - symbol (XAUUSD / AUDUSD / EURUSD)
    ═══════════════════════════════════════════════════════ */
 const AgentScores = {
-  KEY: 'twr_agent_scores',
-  MIN_TRADES: 5, // ต้องเทรดถึง 5 ครั้งก่อน weight จะ kick in
+  KEY: 'twr_agent_scores_v2',
+  MIN_TRADES: 5,
+
+  /** Classify market regime from candles — ใช้ตอน record + ตอน lookup */
+  classifyRegime(candles) {
+    if (!candles || candles.length < 30) return 'unknown';
+    const adx = TA.adx(candles);
+    const atr = TA.atr(candles);
+    const atrAvg = TA.atr(candles, 30);
+    const volatile = atr > atrAvg * 1.4;
+    if (adx >= 25) return volatile ? 'volatile_trending' : 'trending';
+    if (adx <= 18) return volatile ? 'volatile_ranging'  : 'ranging';
+    return 'transitional';
+  },
 
   load() {
-    try { return JSON.parse(localStorage.getItem(this.KEY) || '{}'); }
-    catch { return {}; }
-  },
-
-  save(scores) { localStorage.setItem(this.KEY, JSON.stringify(scores)); },
-
-  /** Called from Journal.setOutcome — update each agent's record */
-  update(entry) {
-    if (!entry.agentVotes || entry.outcome === 'pending') return;
-    const scores = this.load();
-    const won = entry.outcome === 'win';
-    const r   = parseFloat(entry.pnl) || (won ? 1 : entry.outcome === 'loss' ? -1 : 0);
-
-    entry.agentVotes.forEach(v => {
-      if (!v || !v.agent) return;
-      if (!scores[v.agent]) scores[v.agent] = { trades: 0, wins: 0, losses: 0, totalR: 0 };
-      const s = scores[v.agent];
-      s.trades++;
-      const agreed = v.signal === entry.signal;
-      if (agreed) {
-        if (won)               { s.wins++;   s.totalR += r; }
-        else if (!won && r < 0){ s.losses++; s.totalR += r; }
-        else                   { /* breakeven */            }
-      } else {
-        // Agent disagreed with the final signal direction
-        if (!won && r < 0)     { s.wins++;   s.totalR += -r; } // correct to disagree
-        else if (won)          { s.losses++; s.totalR += -r; }
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      if (raw) return JSON.parse(raw);
+      // Migrate from v1 if exists
+      const old = localStorage.getItem('twr_agent_scores');
+      if (old) {
+        const oldScores = JSON.parse(old);
+        const migrated = { agents: {}, meta: { liveTrades: 0, backtestTrades: 0, created: Date.now() }};
+        Object.entries(oldScores).forEach(([name, s]) => {
+          migrated.agents[name] = {
+            all: { t: s.trades || 0, w: s.wins || 0, l: s.losses || 0, R: s.totalR || 0 }
+          };
+          migrated.meta.liveTrades += (s.trades || 0);
+        });
+        return migrated;
       }
+    } catch {}
+    return { agents: {}, meta: { liveTrades: 0, backtestTrades: 0, created: Date.now() } };
+  },
+
+  save(kb) {
+    if (!kb.meta) kb.meta = {};
+    kb.meta.lastUpdate = Date.now();
+    localStorage.setItem(this.KEY, JSON.stringify(kb));
+  },
+
+  /** Generic record — เรียกจากทั้ง Journal และ Backtest */
+  recordTrade(opts) {
+    const { votes, signal, outcome, r, regime, symbol, source } = opts;
+    if (!votes || votes.length === 0) return;
+    if (outcome === 'pending' || outcome === 'breakeven') return;
+
+    const kb = this.load();
+    if (source === 'backtest') kb.meta.backtestTrades = (kb.meta.backtestTrades || 0) + 1;
+    else                       kb.meta.liveTrades     = (kb.meta.liveTrades || 0)     + 1;
+
+    const won = outcome === 'win';
+    const rAbs = Math.abs(r || (won ? 1 : -1));
+
+    votes.forEach(v => {
+      if (!v || !v.agent) return;
+      const agreed = v.signal === signal;
+      const correct = (agreed && won) || (!agreed && !won);
+      const rDelta = correct ? rAbs : -rAbs;
+
+      if (!kb.agents[v.agent]) kb.agents[v.agent] = {};
+      const a = kb.agents[v.agent];
+
+      // Update buckets: 'all', regime, sym_SYMBOL
+      const buckets = ['all'];
+      if (regime) buckets.push(regime);
+      if (symbol) buckets.push(`sym_${symbol}`);
+
+      buckets.forEach(bk => {
+        if (!a[bk]) a[bk] = { t: 0, w: 0, l: 0, R: 0 };
+        a[bk].t++;
+        if (correct) a[bk].w++; else a[bk].l++;
+        a[bk].R += rDelta;
+      });
     });
-    this.save(scores);
+
+    this.save(kb);
   },
 
-  /** Weight multiplier for an agent (default 1.0, range 0.3-2.0) */
-  weight(agentName) {
-    const s = this.load()[agentName];
-    if (!s || s.trades < this.MIN_TRADES) return 1.0;
-    const acc = s.wins / s.trades;
-    // 50% acc = 1.0x, 70% = 1.4x, 30% = 0.6x — capped
-    return Math.max(0.3, Math.min(2.0, 1.0 + (acc - 0.5) * 2));
+  /** Legacy adapter — Journal.setOutcome → recordTrade */
+  update(entry) {
+    if (!entry.agentVotes) return;
+    // Try to classify regime from current candles (live trade)
+    let regime = null;
+    try {
+      const c = TradingWarRoom?.market?.candles?.[entry.sym];
+      if (c) regime = this.classifyRegime(c);
+    } catch {}
+    this.recordTrade({
+      votes:   entry.agentVotes,
+      signal:  entry.signal,
+      outcome: entry.outcome,
+      r:       parseFloat(entry.pnl) || (entry.outcome === 'win' ? 1 : -1),
+      regime,
+      symbol:  entry.sym,
+      source:  'live',
+    });
   },
 
-  /** All agents sorted by trades count */
+  /** Weight multiplier — รับ context (regime, symbol) เพื่อหา bucket ที่เกี่ยวข้องที่สุด */
+  weight(agentName, ctx = {}) {
+    const a = this.load().agents[agentName];
+    if (!a) return 1.0;
+
+    // Priority: regime > symbol > all (use first bucket with enough trades)
+    const bucketsToTry = [];
+    if (ctx.regime)               bucketsToTry.push(ctx.regime);
+    if (ctx.symbol)               bucketsToTry.push(`sym_${ctx.symbol}`);
+    bucketsToTry.push('all');
+
+    for (const bk of bucketsToTry) {
+      const s = a[bk];
+      if (s && s.t >= this.MIN_TRADES) {
+        const acc = s.w / s.t;
+        return Math.max(0.3, Math.min(2.0, 1.0 + (acc - 0.5) * 2));
+      }
+    }
+    return 1.0;
+  },
+
+  /** Detail stats for UI */
   stats() {
-    const scores = this.load();
-    return Object.entries(scores).map(([name, s]) => ({
-      name,
-      trades:   s.trades,
-      wins:     s.wins,
-      losses:   s.losses,
-      accuracy: s.trades > 0 ? Math.round(s.wins / s.trades * 100) : 0,
-      totalR:   s.totalR.toFixed(2),
-      weight:   this.weight(name).toFixed(2),
-    })).sort((a, b) => b.trades - a.trades);
+    const kb = this.load();
+    return Object.entries(kb.agents).map(([name, a]) => {
+      const all = a.all || { t:0, w:0, l:0, R:0 };
+      const regimeStats = (key) => {
+        const b = a[key];
+        if (!b || b.t === 0) return null;
+        return { t: b.t, w: b.w, acc: Math.round(b.w/b.t*100), R: b.R.toFixed(1) };
+      };
+      return {
+        name,
+        total:    all.t,
+        wins:     all.w,
+        losses:   all.l,
+        accuracy: all.t > 0 ? Math.round(all.w / all.t * 100) : 0,
+        totalR:   all.R.toFixed(2),
+        weight:   this.weight(name).toFixed(2),
+        trending: regimeStats('trending'),
+        ranging:  regimeStats('ranging'),
+        vol_tr:   regimeStats('volatile_trending'),
+        vol_rg:   regimeStats('volatile_ranging'),
+        xau:      regimeStats('sym_XAUUSD'),
+        aud:      regimeStats('sym_AUDUSD'),
+        eur:      regimeStats('sym_EURUSD'),
+      };
+    }).sort((a, b) => b.total - a.total);
+  },
+
+  meta() {
+    const kb = this.load();
+    return kb.meta || {};
+  },
+
+  /** Export KB as JSON string */
+  exportJSON() {
+    return JSON.stringify(this.load(), null, 2);
+  },
+
+  /** Import & merge */
+  importJSON(text) {
+    try {
+      const imported = JSON.parse(text);
+      if (!imported.agents) return { ok: false, msg: 'invalid format' };
+      const current = this.load();
+      Object.entries(imported.agents).forEach(([name, a]) => {
+        if (!current.agents[name]) current.agents[name] = {};
+        Object.entries(a).forEach(([bk, s]) => {
+          if (!current.agents[name][bk]) current.agents[name][bk] = { t:0, w:0, l:0, R:0 };
+          current.agents[name][bk].t += s.t || 0;
+          current.agents[name][bk].w += s.w || 0;
+          current.agents[name][bk].l += s.l || 0;
+          current.agents[name][bk].R += s.R || 0;
+        });
+      });
+      this.save(current);
+      return { ok: true, msg: 'merged ' + Object.keys(imported.agents).length + ' agents' };
+    } catch (e) {
+      return { ok: false, msg: e.message };
+    }
+  },
+
+  reset() {
+    this.save({ agents: {}, meta: { liveTrades: 0, backtestTrades: 0, created: Date.now() } });
   },
 
   /** Render UI panel for inclusion in Journal modal */
   render() {
     const s = this.stats();
+    const meta = this.meta();
     if (s.length === 0) {
-      return '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูลทาย — บันทึกผลใน Journal ก่อน (min ' + this.MIN_TRADES + ' trades/agent)</div>';
+      return '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูล — รัน Backtest หรือบันทึก W/L ใน Journal (min ' + this.MIN_TRADES + ' trades/bucket)</div>';
     }
+
+    const cell = (b, fallback = '—') => {
+      if (!b) return `<span style="color:var(--gray)">${fallback}</span>`;
+      const cls = b.acc >= 60 ? 'text-green' : b.acc >= 40 ? 'text-yellow' : 'text-red';
+      return `<span class="${cls}">${b.acc}%</span><span style="color:var(--gray);font-size:5px"> (${b.t})</span>`;
+    };
+
     const rows = s.map(a => {
       const accCls = a.accuracy >= 60 ? 'text-green' : a.accuracy >= 40 ? 'text-yellow' : 'text-red';
       const wCls   = parseFloat(a.weight) >= 1.2 ? 'text-green' : parseFloat(a.weight) <= 0.8 ? 'text-red' : 'text-gray';
-      const enough = a.trades >= this.MIN_TRADES;
       return `<tr>
         <td class="text-teal">${a.name}</td>
-        <td>${a.trades}</td>
-        <td class="text-green">${a.wins}</td>
-        <td class="text-red">${a.losses}</td>
+        <td>${a.total}</td>
         <td class="${accCls}">${a.accuracy}%</td>
-        <td>${a.totalR}R</td>
-        <td class="${wCls}">${enough ? a.weight + 'x' : '<span style="color:var(--gray)">—</span>'}</td>
+        <td class="${parseFloat(a.totalR) > 0 ? 'text-green' : 'text-red'}">${a.totalR}R</td>
+        <td class="${wCls}">${a.weight}x</td>
+        <td>${cell(a.trending)}</td>
+        <td>${cell(a.ranging)}</td>
+        <td>${cell(a.xau)}</td>
+        <td>${cell(a.aud)}</td>
+        <td>${cell(a.eur)}</td>
       </tr>`;
     }).join('');
+
     return `
-      <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">🧠 AGENT SCORES — Adaptive Learning</div>
-      <div style="font-size:6px;color:var(--gray);padding:4px 0">Agent ที่ accuracy สูง → weight เพิ่ม → vote มีน้ำหนักมากขึ้นใน HeadAgent. ต้อง ≥${this.MIN_TRADES} trades ถึง weight kick in</div>
-      <div class="j-table-wrap" style="max-height:180px">
-        <table class="j-table">
+      <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">🧠 KNOWLEDGE BASE — Regime-Aware Learning</div>
+      <div style="font-size:6px;color:var(--gray);padding:4px 0">
+        Live trades: <b style="color:var(--green)">${meta.liveTrades || 0}</b> |
+        Backtest trades: <b style="color:var(--teal)">${meta.backtestTrades || 0}</b> |
+        Total: <b>${(meta.liveTrades || 0) + (meta.backtestTrades || 0)}</b>
+      </div>
+      <div style="font-size:6px;color:var(--gray);padding:2px 0 6px">
+        💡 Weight ใช้ <b>regime-specific</b> ก่อน (ถ้ามี ≥${this.MIN_TRADES} trades) → ตกลงไป symbol → ตกลงไป all.
+        Agent ที่ accuracy ต่ำในตลาดบางแบบ จะถูกลดน้ำหนัก<b>เฉพาะตลาดนั้น</b> ไม่กระทบตลาดที่ทายเก่ง
+      </div>
+      <div class="j-table-wrap" style="max-height:240px">
+        <table class="j-table" style="font-size:5px">
           <thead><tr>
-            <th>Agent</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>Total R</th><th>Weight</th>
+            <th>Agent</th><th>T</th><th>Acc</th><th>R</th><th>W</th>
+            <th>🟢Trend</th><th>🔵Range</th>
+            <th>XAU</th><th>AUD</th><th>EUR</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <div style="margin-top:6px">
-        <button class="btn btn-secondary" onclick="if(confirm('Reset all agent scores?')){AgentScores.save({});Modal.open('journal');}">🔄 Reset Scores</button>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="navigator.clipboard.writeText(AgentScores.exportJSON()).then(()=>alert('Copied to clipboard — paste in another device'))">📤 Export JSON</button>
+        <button class="btn btn-secondary" onclick="const t=prompt('Paste KB JSON:');if(t){const r=AgentScores.importJSON(t);alert(r.msg);Modal.open('journal');}">📥 Import & Merge</button>
+        <button class="btn btn-secondary" onclick="if(confirm('Reset ALL knowledge?')){AgentScores.reset();Modal.open('journal');}">🔄 Reset</button>
       </div>
     `;
   },

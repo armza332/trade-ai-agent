@@ -745,10 +745,10 @@ class GoldTeam {
     return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
   }
 
-  /** Apply adaptive weight from AgentScores to an agent's report */
-  _applyWeight(report, agentName) {
+  /** Apply adaptive weight from AgentScores to an agent's report (regime-aware) */
+  _applyWeight(report, agentName, regime, symbol) {
     if (typeof AgentScores === 'undefined' || !report) return report;
-    const w = AgentScores.weight(agentName);
+    const w = AgentScores.weight(agentName, { regime, symbol });
     if (w !== 1.0) {
       report.conf      = Math.max(20, Math.min(95, Math.round(report.conf * w)));
       report.weightMul = w;
@@ -759,7 +759,8 @@ class GoldTeam {
   analyze(data, market) {
     const agents = {};
     const reports = [];
-    const wt = (r, name) => this._applyWeight(r, name);
+    const regime = (typeof AgentScores !== 'undefined') ? AgentScores.classifyRegime(data.candles) : null;
+    const wt = (r, name) => this._applyWeight(r, name, regime, 'XAUUSD');
 
     if (this._on('enableSMC',       true)) { agents.smc       = wt(this.smc.analyze(data),       'Gold-SMC');       reports.push(agents.smc); }
     if (this._on('enableElliott',   true)) { agents.elliott   = wt(this.elliott.analyze(data),   'Gold-Elliott');   reports.push(agents.elliott); }
@@ -837,9 +838,9 @@ class CurrencyTeam {
     return typeof Settings !== 'undefined' ? Settings.get(key, def) : def;
   }
 
-  _applyWeight(report, agentName) {
+  _applyWeight(report, agentName, regime, symbol) {
     if (typeof AgentScores === 'undefined' || !report) return report;
-    const w = AgentScores.weight(agentName);
+    const w = AgentScores.weight(agentName, { regime, symbol });
     if (w !== 1.0) {
       report.conf      = Math.max(20, Math.min(95, Math.round(report.conf * w)));
       report.weightMul = w;
@@ -850,7 +851,9 @@ class CurrencyTeam {
   _analyzePair(pair, data, prefix, market) {
     const agents = {};
     const reports = [];
-    const wt = (r, name) => this._applyWeight(r, prefix + '-' + name);
+    const regime = (typeof AgentScores !== 'undefined') ? AgentScores.classifyRegime(data.candles) : null;
+    const symbol = prefix === 'AUD' ? 'AUDUSD' : 'EURUSD';
+    const wt = (r, name) => this._applyWeight(r, prefix + '-' + name, regime, symbol);
 
     if (this._on('enableSMC',       true)) { agents.smc       = wt(pair.smc.analyze(data),       'SMC');       reports.push(agents.smc); }
     if (this._on('enableElliott',   true)) { agents.elliott   = wt(pair.elliott.analyze(data),   'Elliott');   reports.push(agents.elliott); }

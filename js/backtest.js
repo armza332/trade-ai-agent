@@ -105,6 +105,19 @@ const Backtest = {
             equity += openTrade.r;
             equityCurve.push({ idx: i, equity, ts: c.ts });
             trades.push(openTrade);
+
+            // Feed KB — backtest learning loop
+            if (typeof AgentScores !== 'undefined' && openTrade.agentVotes) {
+              AgentScores.recordTrade({
+                votes:   openTrade.agentVotes,
+                signal:  openTrade.signal,
+                outcome: openTrade.outcome,
+                r:       openTrade.r,
+                regime:  openTrade.regime,
+                symbol:  symbol,
+                source:  'backtest',
+              });
+            }
             openTrade = null;
           }
         }
@@ -119,18 +132,20 @@ const Backtest = {
           };
 
           let res = null;
+          let agentReports = {};   // for vote tracking
           if (team) {
             res = team.analyze(fakeData);
+            agentReports = res.agents || {};
           } else if (pairTeam) {
-            // Simplified per-pair analysis
             const agents = [];
-            if (Settings.get('enableSMC', true))       agents.push(pairTeam.smc.analyze(fakeData));
-            if (Settings.get('enableElliott', true))   agents.push(pairTeam.elliott.analyze(fakeData));
-            if (Settings.get('enableFib', true))       agents.push(pairTeam.fib.analyze(fakeData));
-            if (Settings.get('enableRSI', true))       agents.push(pairTeam.rsi.analyze(fakeData));
-            if (Settings.get('enableMACD', true))      agents.push(pairTeam.macd.analyze(fakeData));
-            if (Settings.get('enableBollinger', true)) agents.push(pairTeam.bollinger.analyze(fakeData));
-            if (Settings.get('enablePattern', true))   agents.push(pairTeam.pattern.analyze(fakeData));
+            const collect = (r, key) => { if (r) { agentReports[key] = r; agents.push(r); } };
+            if (Settings.get('enableSMC', true))       collect(pairTeam.smc.analyze(fakeData),       'smc');
+            if (Settings.get('enableElliott', true))   collect(pairTeam.elliott.analyze(fakeData),   'elliott');
+            if (Settings.get('enableFib', true))       collect(pairTeam.fib.analyze(fakeData),       'fib');
+            if (Settings.get('enableRSI', true))       collect(pairTeam.rsi.analyze(fakeData),       'rsi');
+            if (Settings.get('enableMACD', true))      collect(pairTeam.macd.analyze(fakeData),      'macd');
+            if (Settings.get('enableBollinger', true)) collect(pairTeam.bollinger.analyze(fakeData), 'bollinger');
+            if (Settings.get('enablePattern', true))   collect(pairTeam.pattern.analyze(fakeData),   'pattern');
             const agg = pairTeam.head.aggregate(agents);
             res = { head: { signal: agg.signal, conf: agg.conf } };
           }
@@ -141,12 +156,25 @@ const Backtest = {
               const entry = c.close;
               const sl = res.head.signal === 'buy' ? entry - atr * slM : entry + atr * slM;
               const tp = res.head.signal === 'buy' ? entry + atr * tpM * rrFactor : entry - atr * tpM * rrFactor;
+
+              // Snapshot agent votes + regime for KB feedback
+              const prefix = symbol === 'XAUUSD' ? 'Gold' : (symbol === 'AUDUSD' ? 'AUD' : 'EUR');
+              const nameMap = { smc:'SMC', elliott:'Elliott', fib:'Fib', rsi:'RSI', macd:'MACD', bollinger:'Bollinger', pivot:'Pivot', pattern:'Pattern', mtf:'MTF', news:'News' };
+              const votes = Object.entries(agentReports).map(([key, r]) => ({
+                agent: `${prefix}-${nameMap[key] || key}`,
+                signal: r.signal,
+                conf: r.conf,
+              }));
+              const regime = AgentScores.classifyRegime(slice);
+
               openTrade = {
                 entryIdx: i,
                 entry, sl, tp,
                 signal: res.head.signal,
                 conf: res.head.conf,
                 ts: c.ts,
+                agentVotes: votes,
+                regime,
               };
             }
           }
