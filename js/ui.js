@@ -309,6 +309,17 @@ const UI = {
           <div class="row"><span class="lbl">Position</span><span class="val">${report.pos} of balance</span></div>
           <div class="row"><span class="lbl">Mode</span><span class="val info">${report.mode ?? 'Swing 🌊'}</span></div>
         </div>
+        ${report.lotSize ? `
+        <div style="margin-top:8px;background:var(--bg-dark);border-left:2px solid ${report.riskWarning ? 'var(--red)' : 'var(--gold)'};padding:6px 8px">
+          <div style="font-size:7px;color:${report.riskWarning ? 'var(--red)' : 'var(--gold)'};margin-bottom:4px">💰 POSITION SIZE</div>
+          <div class="trade-params" style="font-size:7px">
+            <div class="row"><span class="lbl">Account</span><span class="val">$${report.accountSize} · Target ${report.targetRiskPct}%</span></div>
+            <div class="row"><span class="lbl">Lot Size</span><span class="val info">${report.lotSize} lot</span></div>
+            <div class="row"><span class="lbl">Actual Risk</span><span class="val ${report.actualRiskPct > report.targetRiskPct * 1.5 ? 'sl' : ''}">-$${report.riskUSD} (${report.actualRiskPct}%)</span></div>
+            <div class="row"><span class="lbl">Reward (TP1)</span><span class="val tp1">+$${report.rewardUSD}</span></div>
+          </div>
+          ${report.riskWarning ? `<div style="margin-top:4px;font-size:6px;color:var(--red);border-top:1px solid var(--red);padding-top:4px">${report.riskWarning}</div>` : ''}
+        </div>` : ''}
         ${confluenceHTML}
       </div>
 

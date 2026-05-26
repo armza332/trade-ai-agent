@@ -1089,6 +1089,36 @@ class Commander {
     const rrRatio = (Math.abs(tp1 - price) / Math.max(0.0001, Math.abs(sl - price))).toFixed(2);
     const d = cfg.digits - 1;
 
+    // Position size calculator — lot จากบัญชี + risk%
+    const accSize = typeof Settings !== 'undefined' ? Settings.get('accountSize', 30) : 30;
+    const riskPct = typeof Settings !== 'undefined' ? Settings.get('riskPerTrade', 2) : 2;
+    const riskUSD = accSize * (riskPct / 100);
+    const slDist  = Math.abs(price - sl);
+    // Pip value per 0.01 lot (micro):
+    //   Forex: $0.10 per pip
+    //   Gold:  $0.01 per $1 (so per "pip" = per $1) = $1 per $1 movement
+    // We'll compute USD-loss per 0.01 lot at the SL distance
+    let lossPer001Lot;
+    if (sym === 'XAUUSD') {
+      // 0.01 lot Gold = 1 oz, $1 move = $1 loss
+      lossPer001Lot = slDist * 1;
+    } else {
+      // 0.01 lot FX = $0.10 per pip; pip = 0.0001 for AUD/EUR
+      lossPer001Lot = (slDist / cfg.pip) * 0.10;
+    }
+    // Lot size that risks exactly riskUSD
+    let recLot = lossPer001Lot > 0 ? (riskUSD / lossPer001Lot) * 0.01 : 0.01;
+    const idealLot = recLot;
+    recLot = Math.max(0.01, Math.min(10, recLot)); // clamp to broker limits
+    recLot = +recLot.toFixed(2);
+    const actualRisk = recLot / 0.01 * lossPer001Lot;
+    const tpReward   = Math.abs(price - tp1) / slDist * actualRisk;
+    const actualRiskPct = (actualRisk / accSize * 100).toFixed(1);
+    // Warning if lot floor 0.01 causes risk > target
+    const riskWarning = idealLot < 0.01
+      ? `⚠️ Risk ${actualRiskPct}% เกินเป้า ${riskPct}% — ใช้ cent account หรือ TF เล็กกว่า`
+      : null;
+
     // Aggregate votes from all analysts
     const allVotes = {
       SMC:     this._pickVote(goldReport.agents?.smc?.signal, currReport.aud?.agents?.smc?.signal),
@@ -1107,6 +1137,14 @@ class Commander {
       rr:     `1:${rrRatio}`,
       pos:    `${posSize}%`,
       mode:   m.label,
+      // Position sizing
+      lotSize:    recLot.toFixed(2),
+      riskUSD:    actualRisk.toFixed(2),
+      rewardUSD:  tpReward.toFixed(2),
+      accountSize: accSize,
+      actualRiskPct,
+      targetRiskPct: riskPct,
+      riskWarning,
       votes:  allVotes,
       goldSig, goldConf, currSig, currConf,
       summary: signal === 'wait' || signal === 'watch'

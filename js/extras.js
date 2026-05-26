@@ -227,6 +227,9 @@ const Settings = {
     enableDivergence: true,
     minAgentWeight:  0.5,     // skip agents with KB weight below this in voting
     keepAlive:       true,    // wake lock + browser notification
+    accountSize:     30,      // USD balance — used to calculate lot size
+    riskPerTrade:    2,       // % of account per trade
+    accountCurrency: 'USD',
   },
 
   load() {
@@ -512,6 +515,8 @@ const Modal = {
     const pf = document.getElementById('s-pricefeed'); if (pf) pf.checked = Settings.get('priceFeedOn', false);
     const pr = document.getElementById('s-pricerefresh'); if (pr) pr.value = Settings.get('priceRefreshSec', 120);
     const tm = document.getElementById('s-trademode'); if (tm) tm.value = Settings.get('tradeMode', 'swing');
+    const as = document.getElementById('s-accountsize'); if (as) as.value = Settings.get('accountSize', 30);
+    const rk = document.getElementById('s-risk'); if (rk) rk.value = Settings.get('riskPerTrade', 2);
     const ex = document.getElementById('s-enableXAU'); if (ex) ex.checked = Settings.get('enableXAU', true);
     const ea = document.getElementById('s-enableAUD'); if (ea) ea.checked = Settings.get('enableAUD', true);
     const ee = document.getElementById('s-enableEUR'); if (ee) ee.checked = Settings.get('enableEUR', true);
@@ -536,6 +541,8 @@ const Modal = {
     const pf = document.getElementById('s-pricefeed');    if (pf) Settings.set('priceFeedOn', pf.checked);
     const pr = document.getElementById('s-pricerefresh'); if (pr) Settings.set('priceRefreshSec', Math.max(60, parseInt(pr.value) || 120));
     const tm = document.getElementById('s-trademode');    if (tm) Settings.set('tradeMode', tm.value);
+    const as = document.getElementById('s-accountsize');  if (as) Settings.set('accountSize', Math.max(10, parseFloat(as.value) || 30));
+    const rk = document.getElementById('s-risk');         if (rk) Settings.set('riskPerTrade', Math.max(0.5, Math.min(10, parseFloat(rk.value) || 2)));
     const ex = document.getElementById('s-enableXAU');    if (ex) Settings.set('enableXAU', ex.checked);
     const ea = document.getElementById('s-enableAUD');    if (ea) Settings.set('enableAUD', ea.checked);
     const ee = document.getElementById('s-enableEUR');    if (ee) Settings.set('enableEUR', ee.checked);
