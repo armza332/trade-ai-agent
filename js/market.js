@@ -196,8 +196,44 @@ class MarketEngine {
       });
     }
     const provider = typeof Settings !== 'undefined' ? Settings.get('apiProvider', 'twelvedata') : 'twelvedata';
-    if (provider === 'oanda') return this._fetchOANDA_Prices();
+    if (provider === 'oanda')  return this._fetchOANDA_Prices();
+    if (provider === 'yahoo')  return this._fetchYahoo_Prices();
     return this._fetchTwelveData_Prices(apiKey);
+  }
+
+  /** Try direct fetch first, fall back to CORS proxy if blocked */
+  async _yahooFetch(url) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.json();
+    } catch (e) { /* CORS or network */ }
+    // Try CORS proxies (free public services)
+    const proxies = [
+      'https://corsproxy.io/?',
+      'https://api.allorigins.win/raw?url=',
+    ];
+    for (const p of proxies) {
+      try {
+        const r = await fetch(p + encodeURIComponent(url));
+        if (r.ok) return await r.json();
+      } catch (e) { /* try next */ }
+    }
+    return null;
+  }
+
+  async _fetchYahoo_Prices() {
+    const symbols = { XAUUSD: 'XAUUSD=X', AUDUSD: 'AUDUSD=X', EURUSD: 'EURUSD=X' };
+    const px = {};
+    for (const [ourSym, ySym] of Object.entries(symbols)) {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ySym}?interval=1m&range=1d`;
+      const data = await this._yahooFetch(url);
+      if (!data) continue;
+      const meta = data?.chart?.result?.[0]?.meta;
+      const price = meta?.regularMarketPrice ?? meta?.previousClose;
+      if (isFinite(price)) px[ourSym] = price;
+    }
+    if (Object.keys(px).length < 3) return null;
+    return px;
   }
 
   async _fetchTwelveData_Prices(apiKey) {
@@ -260,11 +296,60 @@ class MarketEngine {
     let result;
     if (provider === 'oanda') {
       result = await this._fetchOANDA_History(symbol, interval, size);
+    } else if (provider === 'yahoo') {
+      result = await this._fetchYahoo_History(symbol, interval, size);
     } else {
       result = await this._fetchTwelveData_History(symbol, interval, size, apiKey);
     }
     if (result) HistoryCache.set(symbol, interval, size, result);
     return result;
+  }
+
+  async _fetchYahoo_History(symbol, interval, size) {
+    // Map our interval to Yahoo Finance
+    const ivMap = { '1min':'1m', '5min':'5m', '15min':'15m', '30min':'30m', '1h':'1h', '4h':'1h', '1day':'1d' };
+    const ySym  = { XAUUSD:'XAUUSD=X', AUDUSD:'AUDUSD=X', EURUSD:'EURUSD=X' }[symbol] || symbol;
+    const yInterval = ivMap[interval] || '1h';
+    // Range mapping — choose enough history
+    const rangeMap = { '1m':'1d', '5m':'5d', '15m':'5d', '30m':'1mo', '1h':'1mo', '1d':'1y' };
+    const range = rangeMap[yInterval] || '1mo';
+
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ySym}?interval=${yInterval}&range=${range}`;
+      const data = await this._yahooFetch(url);
+      if (!data) return null;
+      const result = data?.chart?.result?.[0];
+      if (!result) return null;
+      const ts = result.timestamp || [];
+      const q  = result.indicators?.quote?.[0];
+      if (!q) return null;
+      const candles = ts.map((t, i) => ({
+        open:   q.open?.[i],
+        high:   q.high?.[i],
+        low:    q.low?.[i],
+        close:  q.close?.[i],
+        volume: q.volume?.[i] || 1000,
+        ts:     t * 1000,
+      })).filter(c => isFinite(c.open) && isFinite(c.close));
+      // For 4h, aggregate 1h candles
+      if (interval === '4h') {
+        const agg = [];
+        for (let i = 0; i < candles.length; i += 4) {
+          const slice = candles.slice(i, i + 4);
+          if (slice.length === 0) continue;
+          agg.push({
+            open:   slice[0].open,
+            high:   Math.max(...slice.map(c => c.high)),
+            low:    Math.min(...slice.map(c => c.low)),
+            close:  slice.at(-1).close,
+            volume: slice.reduce((s, c) => s + c.volume, 0),
+            ts:     slice[0].ts,
+          });
+        }
+        return agg.slice(-size);
+      }
+      return candles.slice(-size);
+    } catch (e) { return null; }
   }
 
   async _fetchTwelveData_History(symbol, interval, size, apiKey) {
