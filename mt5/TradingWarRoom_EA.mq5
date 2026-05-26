@@ -23,7 +23,7 @@ input string  Symbol2            = "EURUSDc";    // Secondary symbol
 input bool    EnableSymbol2      = true;          // Trade EURUSD too
 
 input group "=== STRATEGY ==="
-input ENUM_TIMEFRAMES Timeframe  = PERIOD_H1;    // Analysis TF
+input ENUM_TIMEFRAMES Timeframe  = PERIOD_H1;    // Analysis TF (Swing default; Scalp uses ScalpTF below)
 input int     RSIPeriod          = 14;
 input double  RSIOversold        = 35.0;
 input double  RSIOverbought      = 65.0;
@@ -31,6 +31,16 @@ input int     BBPeriod           = 20;
 input double  BBDeviation        = 2.0;
 input int     FibLookback        = 50;            // bars for Fib swing high/low
 input int     ATRPeriod          = 14;
+
+input group "=== SCALP MODE (Phase 12.7 — M1 scraping) ==="
+input bool    ScalpMode          = false;         // ⚡ Enable M1 fast-scrap mode (overrides Timeframe)
+input ENUM_TIMEFRAMES ScalpTF    = PERIOD_M1;     // Scalp timeframe (M1 default; try M5 if too noisy)
+input double  ScalpRSIOversold   = 30.0;          // Tighter RSI for scalp (fewer fakes)
+input double  ScalpRSIOverbought = 70.0;
+input double  ScalpSLMult        = 0.8;           // Tighter SL (M1 = small moves)
+input double  ScalpRR            = 1.3;           // Lower R:R (scalp aims for many small wins)
+input int     ScalpCooldownMin   = 3;             // 3-min cooldown (was 30 for swing)
+input int     ScalpMaxPosPerSym  = 1;             // Stricter — 1 trade at a time per symbol
 
 input group "=== RISK MANAGEMENT ==="
 input double  RiskPercent        = 1.5;           // % of balance per trade
@@ -72,6 +82,31 @@ string        symbols[2];
 int           tradesToday_W = 0, tradesToday_L = 0;
 double        pnlToday      = 0;
 
+// Phase 12.7: Effective strategy params (swap when ScalpMode toggles)
+ENUM_TIMEFRAMES effTF;
+double          effRSIOver, effRSIUnder, effSLMult, effRR;
+int             effCooldownMin, effMaxPos;
+
+void ApplyMode() {
+   if (ScalpMode) {
+      effTF          = ScalpTF;
+      effRSIUnder    = ScalpRSIOversold;
+      effRSIOver     = ScalpRSIOverbought;
+      effSLMult      = ScalpSLMult;
+      effRR          = ScalpRR;
+      effCooldownMin = ScalpCooldownMin;
+      effMaxPos      = ScalpMaxPosPerSym;
+   } else {
+      effTF          = Timeframe;
+      effRSIUnder    = RSIOversold;
+      effRSIOver     = RSIOverbought;
+      effSLMult      = SLAtrMult;
+      effRR          = RewardRiskRatio;
+      effCooldownMin = SignalCooldownMin;
+      effMaxPos      = MaxOpenPositions;
+   }
+}
+
 // Phase 12.6: Live training — entry context per open ticket
 struct TradeCtx {
    ulong  ticket;
@@ -90,6 +125,8 @@ int      openCtxCount = 0;
 
 //═══════════════════ ON INIT ════════════════════════════════════════
 int OnInit() {
+   ApplyMode();              // Phase 12.7: set effective TF + thresholds
+
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(30);
    trade.SetTypeFillingBySymbol(Symbol1);
@@ -106,9 +143,9 @@ int OnInit() {
          return INIT_FAILED;
       }
 
-      rsiHandle[i] = iRSI(symbols[i], Timeframe, RSIPeriod, PRICE_CLOSE);
-      bbHandle[i]  = iBands(symbols[i], Timeframe, BBPeriod, 0, BBDeviation, PRICE_CLOSE);
-      atrHandle[i] = iATR(symbols[i], Timeframe, ATRPeriod);
+      rsiHandle[i] = iRSI(symbols[i], effTF, RSIPeriod, PRICE_CLOSE);
+      bbHandle[i]  = iBands(symbols[i], effTF, BBPeriod, 0, BBDeviation, PRICE_CLOSE);
+      atrHandle[i] = iATR(symbols[i], effTF, ATRPeriod);
 
       if (rsiHandle[i] == INVALID_HANDLE ||
           bbHandle[i]  == INVALID_HANDLE ||
@@ -120,10 +157,10 @@ int OnInit() {
       lastSignalTime[i] = 0;
    }
 
-   PrintFormat("✅ Trading War Room EA initialized");
+   PrintFormat("✅ Trading War Room EA initialized [%s MODE]", ScalpMode ? "⚡ SCALP M1" : "🌊 SWING");
    PrintFormat("   Symbols: %s%s", Symbol1, (EnableSymbol2 ? " + " + Symbol2 : ""));
-   PrintFormat("   Timeframe: %s | Risk: %.1f%% | R:R 1:%.1f",
-               EnumToString(Timeframe), RiskPercent, RewardRiskRatio);
+   PrintFormat("   Timeframe: %s | Risk: %.1f%% | R:R 1:%.1f | Cooldown %dmin",
+               EnumToString(effTF), RiskPercent, effRR, effCooldownMin);
    PrintFormat("   Account: $%.2f balance, %.2f equity",
                AccountInfoDouble(ACCOUNT_BALANCE),
                AccountInfoDouble(ACCOUNT_EQUITY));
@@ -152,7 +189,7 @@ void OnTick() {
 
    // Only run signal check on new bar to save CPU
    static datetime lastBar = 0;
-   datetime curBar = iTime(Symbol1, Timeframe, 0);
+   datetime curBar = iTime(Symbol1, effTF, 0);
    if (curBar == lastBar) {
       ManagePositions();
       return;
@@ -178,10 +215,10 @@ void OnTick() {
 //═══════════════════ SIGNAL DETECTION ═══════════════════════════════
 void CheckSignal(string sym, int idx) {
    // Cooldown
-   if (TimeCurrent() - lastSignalTime[idx] < SignalCooldownMin * 60) return;
+   if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) return;
 
    // Already in position?
-   if (CountPositions(sym) >= MaxOpenPositions) return;
+   if (CountPositions(sym) >= effMaxPos) return;
 
    // Get indicator values — use dynamic arrays so ArraySetAsSeries works
    double rsiArr[], bbU[], bbM[], bbL[], atrArr[];
@@ -211,8 +248,8 @@ void CheckSignal(string sym, int idx) {
    // Fibonacci: find swing high/low in last N bars
    double fibHigh = 0, fibLow = 999999;
    for (int j = 1; j <= FibLookback; j++) {
-      double h = iHigh(sym, Timeframe, j);
-      double l = iLow(sym, Timeframe, j);
+      double h = iHigh(sym, effTF, j);
+      double l = iLow(sym, effTF, j);
       if (h > fibHigh) fibHigh = h;
       if (l < fibLow)  fibLow  = l;
    }
@@ -223,9 +260,10 @@ void CheckSignal(string sym, int idx) {
    double fib50_sell  = fibHigh - fibRange * 0.5;
 
    // ─── BUY SIGNAL: RSI oversold + price at lower BB + near Fib support ───
-   bool rsiBuy  = (rsi <= RSIOversold && rsiPrev <= RSIOversold);
+   bool rsiBuy  = (rsi <= effRSIUnder && rsiPrev <= effRSIUnder);
    bool bbBuy   = (mid <= bbDn * 1.0015);  // within 0.15% of lower BB
-   bool fibBuy  = (mid <= fib618_buy * 1.005);  // near 38.2-50% retrace
+   // Scalp mode: skip Fib filter (M1 swings are too narrow to be meaningful)
+   bool fibBuy  = ScalpMode ? true : (mid <= fib618_buy * 1.005);
 
    if (rsiBuy && bbBuy && fibBuy) {
       ExecuteTrade(sym, idx, true, atr, rsi);
@@ -233,9 +271,9 @@ void CheckSignal(string sym, int idx) {
    }
 
    // ─── SELL SIGNAL: RSI overbought + price at upper BB + near Fib resistance ───
-   bool rsiSell = (rsi >= RSIOverbought && rsiPrev >= RSIOverbought);
+   bool rsiSell = (rsi >= effRSIOver && rsiPrev >= effRSIOver);
    bool bbSell  = (mid >= bbUp * 0.9985);
-   bool fibSell = (mid >= fib618_sell * 0.995);
+   bool fibSell = ScalpMode ? true : (mid >= fib618_sell * 0.995);
 
    if (rsiSell && bbSell && fibSell) {
       ExecuteTrade(sym, idx, false, atr, rsi);
@@ -248,8 +286,8 @@ void ExecuteTrade(string sym, int idx, bool isBuy, double atr, double rsi) {
    double bid = SymbolInfoDouble(sym, SYMBOL_BID);
    double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
    double entry = isBuy ? ask : bid;
-   double slDist = atr * SLAtrMult;
-   double tpDist = slDist * RewardRiskRatio;
+   double slDist = atr * effSLMult;
+   double tpDist = slDist * effRR;
    double sl = isBuy ? entry - slDist : entry + slDist;
    double tp = isBuy ? entry + tpDist : entry - tpDist;
 
@@ -472,8 +510,8 @@ void UpdateDashboard() {
 
       color sigClr = C'180,180,180';
       string sigTag = "WAIT ";
-      if (rsi < RSIOversold)      { sigClr = C'0,255,100'; sigTag = "BUY  "; }
-      else if (rsi > RSIOverbought) { sigClr = C'255,80,80'; sigTag = "SELL "; }
+      if (rsi < effRSIUnder)      { sigClr = C'0,255,100'; sigTag = "BUY  "; }
+      else if (rsi > effRSIOver)  { sigClr = C'255,80,80'; sigTag = "SELL "; }
 
       int posCnt = CountPositions(sym);
       string symShort = StringSubstr(sym, 0, 6);
@@ -499,17 +537,19 @@ void UpdateDashboard() {
              StringFormat("%s    %s", trade_status, webStatus),
              tradeClr, 8);
    DashLabel("SYS_LINE2", DASH_X+16, y+38,
-             StringFormat("Risk %.1f%%  R:R 1:%.1f  Magic %d", RiskPercent, RewardRiskRatio, MagicNumber),
+             StringFormat("%s  Risk %.1f%%  R:R 1:%.1f  %s  Magic %d",
+                          ScalpMode ? "⚡SCALP" : "🌊SWING",
+                          RiskPercent, effRR, EnumToString(effTF), MagicNumber),
              C'160,160,160', 7);
 
    // ── Footer signal hunt bar ──
    y += 62;
    double cooldownLeft = 0;
    for (int i = 0; i < nSyms; i++) {
-      double remain = SignalCooldownMin * 60 - (TimeCurrent() - lastSignalTime[i]);
+      double remain = (double)(effCooldownMin * 60) - (double)(TimeCurrent() - lastSignalTime[i]);
       if (remain > cooldownLeft) cooldownLeft = remain;
    }
-   double cdPct = 1.0 - (cooldownLeft / (SignalCooldownMin * 60.0));
+   double cdPct = 1.0 - (cooldownLeft / (effCooldownMin * 60.0));
    string bar = ProgressBar(cdPct, 22);
    DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)cdPct*100) + "%",
              cdPct >= 1 ? C'0,255,100' : C'255,230,0', 8, "Consolas");
@@ -761,8 +801,8 @@ void CaptureOpenContext(ulong dealTicket) {
    double bbU[], bbL[];
    ArraySetAsSeries(bbU, true); ArraySetAsSeries(bbL, true);
 
-   int hRsi = iRSI(sym, Timeframe, RSIPeriod, PRICE_CLOSE);
-   int hBb  = iBands(sym, Timeframe, BBPeriod, 0, BBDeviation, PRICE_CLOSE);
+   int hRsi = iRSI(sym, effTF, RSIPeriod, PRICE_CLOSE);
+   int hBb  = iBands(sym, effTF, BBPeriod, 0, BBDeviation, PRICE_CLOSE);
    if (hRsi != INVALID_HANDLE) {
       double a[]; ArraySetAsSeries(a, true);
       if (CopyBuffer(hRsi, 0, 0, 1, a) > 0) rsi = a[0];
@@ -792,7 +832,8 @@ void CaptureOpenContext(ulong dealTicket) {
    openCtx[openCtxCount].sl       = sl;
    openCtx[openCtxCount].rsiAtEntry = rsi;
    openCtx[openCtxCount].bbPosAtEntry = bbPos;
-   openCtx[openCtxCount].sessionAtEntry = IsLondonNYSession() ? (TimeHour(TimeCurrent()) < 13 ? "london" : "ny") : "asia";
+   MqlDateTime _tm; TimeToStruct(TimeCurrent(), _tm);
+   openCtx[openCtxCount].sessionAtEntry = IsLondonNYSession() ? (_tm.hour < 13 ? "london" : "ny") : "asia";
    openCtx[openCtxCount].openTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
    openCtx[openCtxCount].riskUSD  = riskUSD;
    openCtxCount++;
