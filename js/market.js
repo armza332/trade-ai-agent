@@ -185,7 +185,7 @@ class MarketEngine {
   /** Detect Apps Script env */
   _onAppsScript() { return typeof google !== 'undefined' && google.script && google.script.run; }
 
-  /** Fetch real prices from Twelve Data (or via Apps Script relay) */
+  /** Fetch real prices — route to correct provider */
   async fetchRealPrices(apiKey) {
     if (this._onAppsScript()) {
       return new Promise((resolve) => {
@@ -195,6 +195,12 @@ class MarketEngine {
           .fetchRealPrices();
       });
     }
+    const provider = typeof Settings !== 'undefined' ? Settings.get('apiProvider', 'twelvedata') : 'twelvedata';
+    if (provider === 'oanda') return this._fetchOANDA_Prices();
+    return this._fetchTwelveData_Prices(apiKey);
+  }
+
+  async _fetchTwelveData_Prices(apiKey) {
     if (!apiKey) return null;
     try {
       await RateLimiter.wait();
@@ -208,9 +214,29 @@ class MarketEngine {
       };
       if (!isFinite(px.XAUUSD) || !isFinite(px.AUDUSD) || !isFinite(px.EURUSD)) return null;
       return px;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
+  }
+
+  async _fetchOANDA_Prices() {
+    const token  = Settings.get('oandaToken');
+    const acctId = Settings.get('oandaAccountId');
+    if (!token || !acctId) return null;
+    try {
+      const url = `https://api-fxpractice.oanda.com/v3/accounts/${acctId}/pricing?instruments=XAU_USD,AUD_USD,EUR_USD`;
+      const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      const data = await r.json();
+      if (!data.prices) return null;
+      const px = {};
+      data.prices.forEach(p => {
+        const bid = parseFloat(p.bids?.[0]?.price);
+        const ask = parseFloat(p.asks?.[0]?.price);
+        const mid = (bid + ask) / 2;
+        const sym = p.instrument.replace('_', '');
+        if (isFinite(mid)) px[sym] = mid;
+      });
+      if (!isFinite(px.XAUUSD) || !isFinite(px.AUDUSD) || !isFinite(px.EURUSD)) return null;
+      return px;
+    } catch (e) { return null; }
   }
 
   /** Fetch candle HISTORY (replaces simulator candles entirely) — with cache */
@@ -230,6 +256,18 @@ class MarketEngine {
           .fetchHistory(symbol, interval, size);
       });
     }
+    const provider = typeof Settings !== 'undefined' ? Settings.get('apiProvider', 'twelvedata') : 'twelvedata';
+    let result;
+    if (provider === 'oanda') {
+      result = await this._fetchOANDA_History(symbol, interval, size);
+    } else {
+      result = await this._fetchTwelveData_History(symbol, interval, size, apiKey);
+    }
+    if (result) HistoryCache.set(symbol, interval, size, result);
+    return result;
+  }
+
+  async _fetchTwelveData_History(symbol, interval, size, apiKey) {
     if (!apiKey) return null;
     try {
       await RateLimiter.wait();
@@ -238,7 +276,7 @@ class MarketEngine {
       const r = await fetch(url);
       const data = await r.json();
       if (!data.values || data.status === 'error') return null;
-      const result = data.values.reverse().map(v => ({
+      return data.values.reverse().map(v => ({
         open:   parseFloat(v.open),
         high:   parseFloat(v.high),
         low:    parseFloat(v.low),
@@ -246,11 +284,30 @@ class MarketEngine {
         volume: parseFloat(v.volume) || 1000,
         ts:     new Date(v.datetime).getTime(),
       })).filter(c => isFinite(c.close));
-      HistoryCache.set(symbol, interval, size, result);
-      return result;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
+  }
+
+  async _fetchOANDA_History(symbol, interval, count) {
+    const token = Settings.get('oandaToken');
+    if (!token) return null;
+    // Map interval → OANDA granularity
+    const granMap = { '1min':'M1','5min':'M5','15min':'M15','30min':'M30','1h':'H1','4h':'H4','1day':'D' };
+    const granularity = granMap[interval] || 'H1';
+    const oandaInst = symbol.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1_$2');
+    try {
+      const url = `https://api-fxpractice.oanda.com/v3/instruments/${oandaInst}/candles?granularity=${granularity}&count=${Math.min(500, count)}&price=M`;
+      const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      const data = await r.json();
+      if (!data.candles) return null;
+      return data.candles.filter(c => c.complete).map(c => ({
+        open:   parseFloat(c.mid.o),
+        high:   parseFloat(c.mid.h),
+        low:    parseFloat(c.mid.l),
+        close:  parseFloat(c.mid.c),
+        volume: c.volume || 1000,
+        ts:     new Date(c.time).getTime(),
+      })).filter(c => isFinite(c.close));
+    } catch (e) { return null; }
   }
 
   /** Replace simulator candles with real history */

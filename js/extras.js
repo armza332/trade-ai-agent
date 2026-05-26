@@ -206,8 +206,11 @@ const Settings = {
     cooldownMin:    5,
     priceApiKey:    '',
     priceFeedOn:    false,
-    priceRefreshSec: 300,    // 5 นาที (เดิม 2 นาที — ลดการใช้ API)
-    apiSaver:        true,   // throttle aggressive
+    priceRefreshSec: 300,
+    apiSaver:        true,
+    apiProvider:    'twelvedata',  // 'twelvedata' | 'oanda'
+    oandaToken:     '',
+    oandaAccountId: '',
     tradeMode:      'swing',  // scalp | swing | position
     enableXAU:      true,
     enableAUD:      true,
@@ -514,6 +517,9 @@ const Modal = {
     const pk = document.getElementById('s-pricekey'); if (pk) pk.value = Settings.get('priceApiKey', '');
     const pf = document.getElementById('s-pricefeed'); if (pf) pf.checked = Settings.get('priceFeedOn', false);
     const pr = document.getElementById('s-pricerefresh'); if (pr) pr.value = Settings.get('priceRefreshSec', 120);
+    const pv = document.getElementById('s-provider'); if (pv) pv.value = Settings.get('apiProvider', 'twelvedata');
+    const ot = document.getElementById('s-oandatoken'); if (ot) ot.value = Settings.get('oandaToken', '');
+    const oa = document.getElementById('s-oandaacct'); if (oa) oa.value = Settings.get('oandaAccountId', '');
     const tm = document.getElementById('s-trademode'); if (tm) tm.value = Settings.get('tradeMode', 'swing');
     const as = document.getElementById('s-accountsize'); if (as) as.value = Settings.get('accountSize', 30);
     const rk = document.getElementById('s-risk'); if (rk) rk.value = Settings.get('riskPerTrade', 2);
@@ -540,6 +546,9 @@ const Modal = {
     const pk = document.getElementById('s-pricekey');     if (pk) Settings.set('priceApiKey', pk.value.trim());
     const pf = document.getElementById('s-pricefeed');    if (pf) Settings.set('priceFeedOn', pf.checked);
     const pr = document.getElementById('s-pricerefresh'); if (pr) Settings.set('priceRefreshSec', Math.max(60, parseInt(pr.value) || 120));
+    const pv = document.getElementById('s-provider');     if (pv) Settings.set('apiProvider', pv.value);
+    const ot = document.getElementById('s-oandatoken');   if (ot) Settings.set('oandaToken', ot.value.trim());
+    const oa = document.getElementById('s-oandaacct');    if (oa) Settings.set('oandaAccountId', oa.value.trim());
     const tm = document.getElementById('s-trademode');    if (tm) Settings.set('tradeMode', tm.value);
     const as = document.getElementById('s-accountsize');  if (as) Settings.set('accountSize', Math.max(10, parseFloat(as.value) || 30));
     const rk = document.getElementById('s-risk');         if (rk) Settings.set('riskPerTrade', Math.max(0.5, Math.min(10, parseFloat(rk.value) || 2)));

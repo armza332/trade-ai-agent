@@ -283,8 +283,35 @@
       </div>
       <div class="px-divider"></div>
       <div style="font-size:8px;color:var(--gold);margin:10px 0 6px">💹 PRICE FEED (ราคาจริงจากตลาด)</div>
+
       <div class="form-group">
-        <label class="form-label">🔑 Twelve Data API Key <span class="hint">(ฟรี 800 req/วัน — signup ที่ twelvedata.com)</span></label>
+        <label class="form-label">📡 API Provider</label>
+        <select id="s-provider" class="form-input">
+          <option value="twelvedata">Twelve Data (ฟรี 800/วัน)</option>
+          <option value="oanda">🥇 OANDA Demo (ฟรี unlimited — แนะนำ)</option>
+        </select>
+      </div>
+
+      <div id="oanda-config" style="border-left:2px solid var(--green);padding:6px 8px;margin-bottom:10px;background:rgba(0,255,65,0.05)">
+        <div style="font-size:7px;color:var(--green);margin-bottom:4px">🥇 OANDA Demo Setup</div>
+        <div class="form-group">
+          <label class="form-label">🔑 OANDA API Token <span class="hint">(Manage API Access)</span></label>
+          <input id="s-oandatoken" type="text" class="form-input" placeholder="abc...-..." spellcheck="false">
+        </div>
+        <div class="form-group">
+          <label class="form-label">💼 Account ID <span class="hint">(101-xxx-xxxxxxx-xxx)</span></label>
+          <input id="s-oandaacct" type="text" class="form-input" placeholder="101-001-12345678-001" spellcheck="false">
+        </div>
+        <div style="font-size:6px;color:var(--gray);line-height:1.6">
+          <b style="color:var(--gold)">📘 วิธีหา:</b><br>
+          1. สมัคร <a href="https://www.oanda.com/forex-trading/account/register/demo" target="_blank" style="color:var(--teal)">oanda.com/demo</a><br>
+          2. Login → My Services → <b>Manage API Access</b> → Generate Token<br>
+          3. Account ID ใน Account Statement
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">🔑 Twelve Data API Key <span class="hint">(ถ้าใช้ Twelve Data)</span></label>
         <input id="s-pricekey" type="text" class="form-input" placeholder="abc123def456..." spellcheck="false">
       </div>
       <div class="form-row">
