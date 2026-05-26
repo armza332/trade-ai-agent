@@ -196,9 +196,29 @@ class MarketEngine {
       });
     }
     const provider = typeof Settings !== 'undefined' ? Settings.get('apiProvider', 'twelvedata') : 'twelvedata';
-    if (provider === 'oanda')  return this._fetchOANDA_Prices();
-    if (provider === 'yahoo')  return this._fetchYahoo_Prices();
+    if (provider === 'oanda')       return this._fetchOANDA_Prices();
+    if (provider === 'yahoo')       return this._fetchYahoo_Prices();
+    if (provider === 'frankfurter') return this._fetchFrankfurter_Prices();
     return this._fetchTwelveData_Prices(apiKey);
+  }
+
+  /** Frankfurter — ECB data, forex only, no key, CORS works.
+   *  ไม่มี XAU (gold) → ใช้ราคา simulator ของ gold */
+  async _fetchFrankfurter_Prices() {
+    try {
+      // Get AUD/USD: 1 AUD = X USD (from=AUD,to=USD)
+      const audRes = await fetch('https://api.frankfurter.app/latest?from=AUD&to=USD');
+      const audData = await audRes.json();
+      const eurRes = await fetch('https://api.frankfurter.app/latest?from=EUR&to=USD');
+      const eurData = await eurRes.json();
+      const px = {
+        AUDUSD: audData.rates?.USD,
+        EURUSD: eurData.rates?.USD,
+        XAUUSD: this.prices.XAUUSD,  // fallback to current (Frankfurter ไม่มี gold)
+      };
+      if (!isFinite(px.AUDUSD) || !isFinite(px.EURUSD)) return null;
+      return px;
+    } catch (e) { return null; }
   }
 
   /** Try direct fetch first, fall back to CORS proxy if blocked */
