@@ -196,10 +196,49 @@ class MarketEngine {
       });
     }
     const provider = typeof Settings !== 'undefined' ? Settings.get('apiProvider', 'twelvedata') : 'twelvedata';
+    if (provider === 'ea_bridge')   return this._fetchEABridge_Prices();
     if (provider === 'oanda')       return this._fetchOANDA_Prices();
     if (provider === 'yahoo')       return this._fetchYahoo_Prices();
     if (provider === 'frankfurter') return this._fetchFrankfurter_Prices();
     return this._fetchTwelveData_Prices(apiKey);
+  }
+
+  /** Phase 12.3 — EA Bridge: real-time prices straight from MT5 EA via Apps Script.
+   *  Pros: zero CORS, broker-quality, no rate limit, free.
+   *  Cons: needs MT5 running + Apps Script deployed. */
+  async _fetchEABridge_Prices() {
+    const url = typeof Settings !== 'undefined' ? Settings.get('botBridgeURL', '') : '';
+    if (!url || url.length < 20) {
+      console.warn('EA Bridge: botBridgeURL not configured');
+      return null;
+    }
+    try {
+      const r = await fetch(url + '?action=prices&t=' + Date.now());
+      const data = await r.json();
+      if (!data.ok || !data.prices) return null;
+      // Cache full payload (RSI/ATR/BB) for analysis use
+      this.lastEABridge = data;
+      // Map symbol keys: AUDUSDm/AUDUSDc → AUDUSD
+      const stripSuffix = (k) => k.replace(/[mczr]$/i, '');
+      const px = {};
+      for (const sym in data.prices) {
+        const norm = stripSuffix(sym);   // XAUUSDm → XAUUSD
+        const p = data.prices[sym];
+        const mid = (p.bid + p.ask) / 2;
+        if (norm.startsWith('XAU')) px.XAUUSD = mid;
+        else if (norm.startsWith('AUD')) px.AUDUSD = mid;
+        else if (norm.startsWith('EUR')) px.EURUSD = mid;
+      }
+      // Fallback: keep existing if a symbol missing
+      px.XAUUSD = px.XAUUSD || this.prices.XAUUSD;
+      px.AUDUSD = px.AUDUSD || this.prices.AUDUSD;
+      px.EURUSD = px.EURUSD || this.prices.EURUSD;
+      if (!isFinite(px.XAUUSD) || !isFinite(px.AUDUSD) || !isFinite(px.EURUSD)) return null;
+      return px;
+    } catch (e) {
+      console.error('EA Bridge fetch failed', e);
+      return null;
+    }
   }
 
   /** Frankfurter — ECB data, forex only, no key, CORS works.

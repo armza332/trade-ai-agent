@@ -550,7 +550,11 @@ const Modal = {
     Settings.set('cooldownMin',    parseInt(document.getElementById('s-cooldown').value) || 5);
     const pk = document.getElementById('s-pricekey');     if (pk) Settings.set('priceApiKey', pk.value.trim());
     const pf = document.getElementById('s-pricefeed');    if (pf) Settings.set('priceFeedOn', pf.checked);
-    const pr = document.getElementById('s-pricerefresh'); if (pr) Settings.set('priceRefreshSec', Math.max(60, parseInt(pr.value) || 120));
+    const pr = document.getElementById('s-pricerefresh'); if (pr) {
+      const prov = document.getElementById('s-provider')?.value || 'twelvedata';
+      const minR = prov === 'ea_bridge' ? 15 : 60;   // EA Bridge can poll faster
+      Settings.set('priceRefreshSec', Math.max(minR, parseInt(pr.value) || (prov === 'ea_bridge' ? 30 : 120)));
+    }
     const pv = document.getElementById('s-provider');     if (pv) Settings.set('apiProvider', pv.value);
     const ot = document.getElementById('s-oandatoken');   if (ot) Settings.set('oandaToken', ot.value.trim());
     const oa = document.getElementById('s-oandaacct');    if (oa) Settings.set('oandaAccountId', oa.value.trim());
@@ -582,6 +586,36 @@ const Modal = {
     status.textContent = '✓ บันทึกแล้ว';
     status.style.color = 'var(--green)';
     setTimeout(() => status.textContent = '', 2000);
+  },
+
+  // ⚡ Scalp Test (Phase 12.3): One-click config for gold scalping via EA Bridge
+  enableScalpTest() {
+    const bridge = Settings.get('botBridgeURL', '');
+    if (!bridge || bridge.length < 20) {
+      const s = document.getElementById('s-status');
+      s.textContent = '✗ ต้องตั้ง Bot Bridge URL ก่อน (ส่วนล่างของ settings)';
+      s.style.color = 'var(--red)';
+      return;
+    }
+    // Apply scalp config
+    Settings.set('apiProvider',     'ea_bridge');
+    Settings.set('priceFeedOn',     true);
+    Settings.set('priceRefreshSec', 30);
+    Settings.set('tradeMode',       'scalp');
+    Settings.set('enableXAU',       true);
+    Settings.set('enableAUD',       true);
+    Settings.set('enableEUR',       true);
+    Settings.set('minGrade',        'B');     // scalp = more signals
+    Settings.set('cooldownMin',     3);
+    Settings.set('adxGate',         15);      // looser for scalp
+    this.fillSettings();
+    const s = document.getElementById('s-status');
+    s.innerHTML = '⚡ <b>Scalp Test เปิดแล้ว!</b> EA Bridge + Scalp mode + ทอง/AUD/EUR · refresh 30s';
+    s.style.color = 'var(--green)';
+    // Restart price loop with new cadence
+    if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom._realPriceLoop) {
+      TradingWarRoom._realPriceLoop();
+    }
   },
 
   async testPriceFeed() {

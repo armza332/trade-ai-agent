@@ -352,22 +352,31 @@ const TradingWarRoom = {
   async _realPriceLoop() {
     const refresh = async () => {
       if (!Settings.get('priceFeedOn')) return;
-      const onApps = this.market._onAppsScript();
-      const key    = Settings.get('priceApiKey');
-      if (!onApps && !key) return;
+      const onApps   = this.market._onAppsScript();
+      const provider = Settings.get('apiProvider', 'twelvedata');
+      const key      = Settings.get('priceApiKey');
+      const bridge   = Settings.get('botBridgeURL', '');
+      // Gate per provider: ea_bridge needs URL; others need key (unless server-side)
+      if (provider === 'ea_bridge' && (!bridge || bridge.length < 20)) return;
+      if (provider !== 'ea_bridge' && !onApps && !key) return;
 
       try {
         const px = await this.market.fetchRealPrices(key);
         if (px && isFinite(px.XAUUSD) && isFinite(px.AUDUSD) && isFinite(px.EURUSD)) {
           this.market.applyRealPrices(px);
-          this._log('CMD', 'PriceFeed', `📡 Real prices: XAU ${px.XAUUSD.toFixed(2)} | AUD ${px.AUDUSD.toFixed(4)} | EUR ${px.EURUSD.toFixed(4)}`);
+          const tag = provider === 'ea_bridge' ? '🤖 EA' : '📡 Real';
+          this._log('CMD', 'PriceFeed', `${tag} prices: XAU ${px.XAUUSD.toFixed(2)} | AUD ${px.AUDUSD.toFixed(4)} | EUR ${px.EURUSD.toFixed(4)}`);
         }
       } catch (e) { /* silent */ }
     };
 
-    // Initial fetch shortly after boot, then on Settings cadence
+    // ea_bridge can poll faster (no rate limit). Others ≥60s.
+    const provider = Settings.get('apiProvider', 'twelvedata');
+    const minPoll  = provider === 'ea_bridge' ? 15 : 60;
+    const interval = Math.max(minPoll, Settings.get('priceRefreshSec', 120));
+
     setTimeout(refresh, 2000);
-    setInterval(() => refresh(), Math.max(60, Settings.get('priceRefreshSec', 120)) * 1000);
+    setInterval(() => refresh(), interval * 1000);
   },
 };
 

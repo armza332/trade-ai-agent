@@ -53,7 +53,8 @@ input bool    ShowDashboard      = true;          // On-chart status panel
 input group "=== WEB BRIDGE (Optional) ==="
 input string  WebhookURL         = "";            // Apps Script URL (paste after deploy)
 input string  WebhookSecret      = "twr-secret";  // Match Apps Script secret
-input int     WebPushSec         = 60;            // Push status every N seconds
+input int     WebPushSec         = 30;            // Push status every N seconds (scalp = 15-30s)
+input string  WatchXAU           = "XAUUSDm";     // XAU symbol for price feed (Phase 12.3)
 
 //═══════════════════ GLOBALS ════════════════════════════════════════
 CTrade        trade;
@@ -395,11 +396,15 @@ void PushToWeb() {
       );
    }
 
+   // ── Phase 12.3: Real-time prices for Web analysis ──
+   string pxJson = BuildPricesJson();
+
    string json = StringFormat(
       "{\"type\":\"status\",\"secret\":\"%s\",\"ts\":%d,"
       "\"balance\":%.2f,\"equity\":%.2f,\"freeMargin\":%.2f,"
       "\"todayWins\":%d,\"todayLosses\":%d,\"todayPnL\":%.2f,"
       "\"symbols\":[\"%s\",\"%s\"],"
+      "\"prices\":%s,"
       "\"positions\":[%s]}",
       WebhookSecret, (int)TimeCurrent(),
       AccountInfoDouble(ACCOUNT_BALANCE),
@@ -407,6 +412,7 @@ void PushToWeb() {
       AccountInfoDouble(ACCOUNT_MARGIN_FREE),
       tradesToday_W, tradesToday_L, pnlToday,
       Symbol1, Symbol2,
+      pxJson,
       posJson
    );
 
@@ -427,4 +433,81 @@ void PushToWeb() {
          }
       }
    }
+}
+
+//═══════════════════ PHASE 12.3: Build prices JSON ═════════════════════
+// Outputs live bid/ask + H1 indicators for XAU + Symbol1 + Symbol2.
+// Web side uses these as ground truth (replaces external API).
+string BuildPriceEntry(string sym) {
+   if (!SymbolSelect(sym, true)) return "";
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   if (bid <= 0 || ask <= 0) return "";
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double spread = (ask - bid) / point;
+
+   // Try to grab H1 RSI/ATR (cached for Symbol1/Symbol2; else create temp handle)
+   double rsi = 0, atr = 0;
+   double bbUp = 0, bbDn = 0, bbMid = 0;
+
+   int hRsi = iRSI(sym, PERIOD_H1, 14, PRICE_CLOSE);
+   int hAtr = iATR(sym, PERIOD_H1, 14);
+   int hBb  = iBands(sym, PERIOD_H1, 20, 0, 2.0, PRICE_CLOSE);
+
+   if (hRsi != INVALID_HANDLE) {
+      double a[]; ArraySetAsSeries(a, true);
+      if (CopyBuffer(hRsi, 0, 0, 1, a) > 0) rsi = a[0];
+      IndicatorRelease(hRsi);
+   }
+   if (hAtr != INVALID_HANDLE) {
+      double a[]; ArraySetAsSeries(a, true);
+      if (CopyBuffer(hAtr, 0, 0, 1, a) > 0) atr = a[0];
+      IndicatorRelease(hAtr);
+   }
+   if (hBb != INVALID_HANDLE) {
+      double bU[], bM[], bL[];
+      ArraySetAsSeries(bU, true); ArraySetAsSeries(bM, true); ArraySetAsSeries(bL, true);
+      if (CopyBuffer(hBb, 1, 0, 1, bU) > 0 &&
+          CopyBuffer(hBb, 0, 0, 1, bM) > 0 &&
+          CopyBuffer(hBb, 2, 0, 1, bL) > 0) {
+         bbUp = bU[0]; bbMid = bM[0]; bbDn = bL[0];
+      }
+      IndicatorRelease(hBb);
+   }
+
+   // Daily change percent
+   MqlRates dayRates[]; ArraySetAsSeries(dayRates, true);
+   double dayChg = 0;
+   if (CopyRates(sym, PERIOD_D1, 0, 2, dayRates) >= 2 && dayRates[1].close > 0) {
+      dayChg = (bid - dayRates[1].close) / dayRates[1].close * 100.0;
+   }
+
+   string fmt = StringFormat("%%.%df", digits);
+   return StringFormat(
+      "\"%s\":{\"bid\":" + fmt + ",\"ask\":" + fmt + ",\"spread\":%.1f,"
+      "\"rsi\":%.2f,\"atr\":" + fmt + ",\"bbUp\":" + fmt + ",\"bbMid\":" + fmt + ",\"bbDn\":" + fmt + ","
+      "\"dayChg\":%.3f,\"digits\":%d}",
+      sym, bid, ask, spread, rsi, atr, bbUp, bbMid, bbDn, dayChg, digits
+   );
+}
+
+string BuildPricesJson() {
+   string list[3] = {WatchXAU, Symbol1, Symbol2};
+   string out = "{";
+   bool first = true;
+   for (int i = 0; i < 3; i++) {
+      if (StringLen(list[i]) == 0) continue;
+      // Skip duplicates (e.g., if user puts Symbol1 in WatchXAU by mistake)
+      bool dup = false;
+      for (int j = 0; j < i; j++) if (list[j] == list[i]) { dup = true; break; }
+      if (dup) continue;
+      string entry = BuildPriceEntry(list[i]);
+      if (StringLen(entry) == 0) continue;
+      if (!first) out += ",";
+      out += entry;
+      first = false;
+   }
+   out += "}";
+   return out;
 }
