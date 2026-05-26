@@ -1347,6 +1347,127 @@ const KeepAlive = {
   },
 };
 
+/* ═══════════════════════════════════════════════════════
+   ADAPTIVE STRATEGY ENGINE
+     - Auto-pick agents per symbol from KB performance
+     - Session quality multiplier (Asia weak, London/NY strong)
+     - Volatility-adjusted position sizing
+     - Playbook display
+   ═══════════════════════════════════════════════════════ */
+const AdaptiveStrategy = {
+  /** Session multiplier — Asia weak, London/NY peak */
+  sessionMultiplier() {
+    const h = new Date().getUTCHours();
+    if (h >= 8 && h < 12)  return { mult: 1.20, label: '🇬🇧 London Open', quality: 'high' };
+    if (h >= 12 && h < 13) return { mult: 1.30, label: '🌍 London/NY Overlap', quality: 'peak' };
+    if (h >= 13 && h < 17) return { mult: 1.20, label: '🇺🇸 NY Active', quality: 'high' };
+    if (h >= 17 && h < 20) return { mult: 0.90, label: '🌙 NY Wind Down', quality: 'medium' };
+    if (h >= 0  && h < 7)  return { mult: 0.70, label: '🇯🇵 Asia Quiet', quality: 'low' };
+    return { mult: 0.80, label: '⏸ Off-Peak', quality: 'low' };
+  },
+
+  /** Volatility adjustment — high vol = reduce size */
+  volatilityAdjust(candles) {
+    if (!candles || candles.length < 50) return { multiplier: 1, label: '○ Normal', reason: 'No data' };
+    const atr    = TA.atr(candles, 14);
+    const atrAvg = TA.atr(candles, 50);
+    const ratio  = atrAvg > 0 ? atr / atrAvg : 1;
+    if (ratio > 2.0)  return { multiplier: 0,    ratio, label: '🔴 EXTREME VOL', reason: 'ATR > 2x avg — SKIP', skip: true };
+    if (ratio > 1.5)  return { multiplier: 0.5,  ratio, label: '🟠 HIGH VOL',    reason: 'ATR > 1.5x → half size' };
+    if (ratio > 1.2)  return { multiplier: 0.75, ratio, label: '🟡 ABOVE AVG',   reason: 'Slightly elevated → 75%' };
+    if (ratio < 0.5)  return { multiplier: 1.3,  ratio, label: '🟢 LOW VOL',     reason: 'Quiet → can size up' };
+    return { multiplier: 1.0, ratio, label: '⚪ NORMAL', reason: 'ATR normal' };
+  },
+
+  /** Detect market regime more detailed */
+  detectMarket(candles) {
+    if (!candles || candles.length < 30) return { label: 'Unknown', adx: 0 };
+    const adx = TA.adx(candles, 14);
+    const struct = TA.structure(candles);
+    if (adx >= 30) {
+      return {
+        label: struct.trend === 'bullish' ? '🚀 Strong Uptrend' : '📉 Strong Downtrend',
+        regime: 'strong_trend', adx, trend: struct.trend,
+      };
+    }
+    if (adx >= 22) return { label: '📈 Trending', regime: 'trending', adx, trend: struct.trend };
+    if (adx <= 15) return { label: '↔️ Tight Range', regime: 'tight_range', adx };
+    if (adx <= 20) return { label: '⏸ Loose Range', regime: 'range', adx };
+    return { label: '🔄 Transitional', regime: 'transitional', adx };
+  },
+
+  /** Recommend agents to use for current (symbol, regime) based on KB */
+  recommendAgents(symbol) {
+    if (typeof AgentScores === 'undefined') return null;
+    const prefix = symbol === 'XAUUSD' ? 'Gold' : (symbol === 'AUDUSD' ? 'AUD' : 'EUR');
+    const allAgents = AgentScores.stats().filter(a => a.name.startsWith(prefix + '-'));
+
+    const winners = allAgents.filter(a => parseFloat(a.totalR) >= 30);
+    const losers  = allAgents.filter(a => parseFloat(a.totalR) <= -30);
+    const neutral = allAgents.filter(a => Math.abs(parseFloat(a.totalR)) < 30);
+
+    return {
+      symbol,
+      winners:  winners.map(a => ({ name: a.name, short: a.name.split('-')[1], acc: a.accuracy, R: parseFloat(a.totalR) })),
+      losers:   losers.map(a => ({ name: a.name, short: a.name.split('-')[1], acc: a.accuracy, R: parseFloat(a.totalR) })),
+      neutral:  neutral.map(a => ({ name: a.name, short: a.name.split('-')[1], acc: a.accuracy, R: parseFloat(a.totalR) })),
+      hasEnoughData: allAgents.some(a => a.total >= 20),
+    };
+  },
+
+  /** Cascade quality check — multiple gates must pass */
+  qualityCheck(opts) {
+    const { symbol, signal, confluenceScore, candles } = opts;
+    const session = this.sessionMultiplier();
+    const vol     = this.volatilityAdjust(candles);
+    const market  = this.detectMarket(candles);
+    const agents  = this.recommendAgents(symbol);
+
+    const checks = [];
+    if (session.quality === 'low') checks.push({ ok: false, msg: 'Session quality ต่ำ (Asia/off-peak)' });
+    else                            checks.push({ ok: true,  msg: `Session ${session.label}` });
+
+    if (vol.skip) checks.push({ ok: false, msg: vol.reason });
+    else          checks.push({ ok: true,  msg: vol.label });
+
+    if (!confluenceScore || confluenceScore < 0.6) checks.push({ ok: false, msg: 'Confluence weak (<60%)' });
+    else                                           checks.push({ ok: true,  msg: 'Confluence strong' });
+
+    const numWinners = agents?.winners?.length || 0;
+    if (numWinners < 2) checks.push({ ok: false, msg: `Only ${numWinners} winning agents on ${symbol}` });
+    else                checks.push({ ok: true,  msg: `${numWinners} winning agents available` });
+
+    const allPass = checks.every(c => c.ok);
+    return { pass: allPass, checks, session, vol, market, agents };
+  },
+
+  /** Render Playbook panel for Commander */
+  renderPlaybook(symbol, signal, confluenceScore, candles) {
+    const qc = this.qualityCheck({ symbol, signal, confluenceScore, candles });
+
+    const rowItems = qc.checks.map(c =>
+      `<div class="row"><span class="lbl">${c.ok ? '✅' : '❌'} ${c.msg.split(' ')[0]}</span><span class="val ${c.ok ? 'up' : 'dn'}">${c.msg.split(' ').slice(1).join(' ') || (c.ok ? 'OK' : 'FAIL')}</span></div>`
+    ).join('');
+
+    const verdict = qc.pass ? '🟢 GO' : '🔴 SKIP';
+    const verdictColor = qc.pass ? 'var(--green)' : 'var(--red)';
+
+    return `
+      <div style="margin-top:8px;background:linear-gradient(90deg,rgba(${qc.pass?'0,255,65':'255,51,51'},0.1),transparent);border-left:3px solid ${verdictColor};padding:6px 8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:7px;color:${verdictColor}">⚙ ADAPTIVE PLAYBOOK</span>
+          <span style="font-size:9px;color:${verdictColor};font-weight:bold">${verdict}</span>
+        </div>
+        <div class="trade-params" style="font-size:6px">${rowItems}</div>
+        <div style="font-size:6px;color:var(--gray);padding-top:4px">
+          Market: ${qc.market.label} · ATR ratio: ${qc.vol.ratio?.toFixed(2)}x · Position mult: ${qc.vol.multiplier}x
+        </div>
+      </div>
+    `;
+  },
+};
+window.AdaptiveStrategy = AdaptiveStrategy;
+
 window.KeepAlive    = KeepAlive;
 window.SignalGrade  = SignalGrade;
 window.Settings     = Settings;

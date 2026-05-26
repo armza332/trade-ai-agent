@@ -104,12 +104,30 @@ const TradingWarRoom = {
     const gradeInfo = SignalGrade.grade(cmdR, goldR, fxR);
 
     // Confluence — check multi-category agreement (trend+momentum+structure+pattern)
-    // ใช้ agents ของทีมที่ "นำ" (สัญญาณหลัก)
     const leadAgents = cmdR.sym === 'XAUUSD'
       ? goldR.agents
       : (cmdR.sym === 'AUDUSD' ? fxR.aud?.agents : fxR.eur?.agents);
     const confluence = Confluence.analyze(leadAgents, cmdR.signal);
     gradeInfo.confluence = confluence;
+
+    // Adaptive Playbook — session + volatility + symbol-specific check
+    if (typeof AdaptiveStrategy !== 'undefined' && (cmdR.signal === 'buy' || cmdR.signal === 'sell')) {
+      const leadCandles = this.market.candles[cmdR.sym];
+      const playbook = AdaptiveStrategy.qualityCheck({
+        symbol: cmdR.sym,
+        signal: cmdR.signal,
+        confluenceScore: confluence.score,
+        candles: leadCandles,
+      });
+      cmdR.playbook = playbook;
+      // Demote grade if playbook fails
+      if (!playbook.pass && gradeInfo.grade !== 'D') {
+        const order = ['D','C','B','A','S+'];
+        const idx = order.indexOf(gradeInfo.grade);
+        if (idx > 0) gradeInfo.grade = order[idx - 1];
+        gradeInfo.playbookDemoted = true;
+      }
+    }
     // Adjust grade based on confluence
     if (cmdR.signal === 'buy' || cmdR.signal === 'sell') {
       gradeInfo.grade = Confluence.adjustGrade(gradeInfo.grade, confluence.score);

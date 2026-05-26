@@ -291,6 +291,26 @@ const UI = {
       ? Confluence.render(report.gradeInfo.confluence)
       : '';
 
+    // Adaptive Playbook display
+    const playbookHTML = (report.playbook && typeof AdaptiveStrategy !== 'undefined' && (report.signal === 'buy' || report.signal === 'sell'))
+      ? (() => {
+          const qc = report.playbook;
+          const checks = qc.checks.map(c => `<div class="row"><span class="lbl">${c.ok ? '✅' : '❌'}</span><span class="val ${c.ok ? 'up' : 'dn'}">${c.msg}</span></div>`).join('');
+          const verdict = qc.pass ? '🟢 GO' : '🔴 SKIP';
+          const vc = qc.pass ? 'var(--green)' : 'var(--red)';
+          return `<div style="margin-top:8px;background:linear-gradient(90deg,rgba(${qc.pass?'0,255,65':'255,51,51'},0.1),transparent);border-left:3px solid ${vc};padding:6px 8px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:7px;color:${vc}">⚙ ADAPTIVE PLAYBOOK</span>
+              <span style="font-size:9px;color:${vc}">${verdict}</span>
+            </div>
+            <div class="trade-params" style="font-size:6px">${checks}</div>
+            <div style="font-size:6px;color:var(--gray);padding-top:4px">
+              ${qc.market.label} · ATR ${qc.vol.ratio?.toFixed(2)}x · Pos mult: ${qc.vol.multiplier}x
+            </div>
+          </div>`;
+        })()
+      : '';
+
     el.innerHTML = `<div class="cmd-body">
       <!-- Signal section -->
       <div class="cmd-section">
@@ -321,6 +341,7 @@ const UI = {
           ${report.riskWarning ? `<div style="margin-top:4px;font-size:6px;color:var(--red);border-top:1px solid var(--red);padding-top:4px">${report.riskWarning}</div>` : ''}
         </div>` : ''}
         ${confluenceHTML}
+        ${playbookHTML}
       </div>
 
       <!-- Votes section -->
