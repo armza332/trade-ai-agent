@@ -110,6 +110,28 @@ const TradingWarRoom = {
     const confluence = Confluence.analyze(leadAgents, cmdR.signal);
     gradeInfo.confluence = confluence;
 
+    // Top-Down MTF Analysis — เทรดเดอร์ตัวจริงดูยังไง
+    if (typeof TopDownAnalyzer !== 'undefined' && (cmdR.signal === 'buy' || cmdR.signal === 'sell')) {
+      const mode = Settings.get('tradeMode', 'swing');
+      cmdR.topDown = TopDownAnalyzer.analyze(cmdR.sym, mode, leadAgents, this.market, cmdR.signal);
+      // ปรับ grade ตาม top-down verdict
+      if (cmdR.topDown.verdict.includes('SKIP')) {
+        gradeInfo.grade = 'D';
+        gradeInfo.alert = false;
+      } else if (cmdR.topDown.verdict.includes('WAIT')) {
+        // demote 1 step
+        const order = ['D','C','B','A','S+'];
+        const idx = order.indexOf(gradeInfo.grade);
+        if (idx > 0) gradeInfo.grade = order[idx - 1];
+      } else if (cmdR.topDown.verdict.includes('STRONG GO')) {
+        // boost 1 step
+        const order = ['D','C','B','A','S+'];
+        const idx = order.indexOf(gradeInfo.grade);
+        if (idx < order.length - 1) gradeInfo.grade = order[idx + 1];
+        gradeInfo.alert = (gradeInfo.grade === 'A' || gradeInfo.grade === 'S+');
+      }
+    }
+
     // Adaptive Playbook — session + volatility + symbol-specific check
     if (typeof AdaptiveStrategy !== 'undefined' && (cmdR.signal === 'buy' || cmdR.signal === 'sell')) {
       const leadCandles = this.market.candles[cmdR.sym];

@@ -341,6 +341,7 @@ const UI = {
           ${report.riskWarning ? `<div style="margin-top:4px;font-size:6px;color:var(--red);border-top:1px solid var(--red);padding-top:4px">${report.riskWarning}</div>` : ''}
         </div>` : ''}
         ${confluenceHTML}
+        ${report.topDown && typeof TopDownAnalyzer !== 'undefined' ? TopDownAnalyzer.render(report.topDown, report.signal) : ''}
         ${playbookHTML}
       </div>
 

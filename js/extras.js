@@ -1468,6 +1468,177 @@ const AdaptiveStrategy = {
 };
 window.AdaptiveStrategy = AdaptiveStrategy;
 
+/* ═══════════════════════════════════════════════════════
+   TOP-DOWN ANALYZER — เทรดเดอร์ตัวจริงคิดยังไง
+     1. HTF Bias        → ทิศหลัก (Daily/4h)
+     2. MTF Structure   → อยู่ที่ระดับสำคัญไหม (4h/1h)
+     3. LTF Trigger     → setup ใน LTF (1h/15min)
+     4. Conflict        → trend vs reversal ขัดกันไหม
+     5. Verdict         → GO / WAIT / SKIP + เหตุผล
+   ═══════════════════════════════════════════════════════ */
+const TopDownAnalyzer = {
+  /** TF stack ที่จะใช้ตาม trade mode */
+  TF_STACKS: {
+    scalp:    { htf: '1h',   mtf: '15min', ltf: '5min',  label: '1h→15m→5m' },
+    swing:    { htf: '4h',   mtf: '1h',    ltf: '15min', label: '4h→1h→15m' },
+    position: { htf: '1day', mtf: '4h',    ltf: '1h',    label: 'D→4h→1h' },
+  },
+
+  /** กลุ่มของ agent ตามบทบาท */
+  TREND_AGENTS:    ['mtf', 'elliott'],
+  STRUCTURE_AGENTS:['smc', 'fib', 'pivot'],
+  REVERSAL_AGENTS: ['divergence', 'pattern'],
+  MOMENTUM_AGENTS: ['macd', 'rsi'],
+
+  /** Run full top-down analysis */
+  analyze(symbol, mode, agents, market, signal) {
+    const stack = this.TF_STACKS[mode] || this.TF_STACKS.swing;
+    const mtfData = market.getMTF ? market.getMTF(symbol) : {};
+
+    // STEP 1: HTF Bias
+    const htf = mtfData[stack.htf];
+    const mtf = mtfData[stack.mtf];
+    const ltf = mtfData[stack.ltf];
+    const biasHTF = htf?.trend || '?';
+    const biasMTF = mtf?.trend || '?';
+    const biasLTF = ltf?.trend || '?';
+    const biases = [biasHTF, biasMTF, biasLTF].filter(b => b === 'bull' || b === 'bear');
+    const allBull = biases.length >= 2 && biases.every(b => b === 'bull');
+    const allBear = biases.length >= 2 && biases.every(b => b === 'bear');
+    const aligned = allBull || allBear;
+    const dominantBias = allBull ? 'bull' : allBear ? 'bear' : 'mixed';
+
+    // STEP 2: Structure check (where are we?)
+    const structureSignals = this.STRUCTURE_AGENTS.map(k => agents[k]?.signal).filter(Boolean);
+    const structureSupport = structureSignals.filter(s => s === signal).length;
+    const structureDissent = structureSignals.filter(s => s === (signal === 'buy' ? 'sell' : 'buy')).length;
+
+    // STEP 3: LTF Trigger
+    const reversalSignals = this.REVERSAL_AGENTS.map(k => agents[k]?.signal).filter(Boolean);
+    const triggerForSignal = reversalSignals.includes(signal);
+    const reversalAgainst = reversalSignals.filter(s => s === (signal === 'buy' ? 'sell' : 'buy'));
+
+    // STEP 4: Conflict — Trend says X, Reversal says Y
+    const trendSignals = this.TREND_AGENTS.map(k => agents[k]?.signal).filter(Boolean);
+    const trendAgree   = trendSignals.filter(s => s === signal).length;
+    const trendDissent = trendSignals.filter(s => s === (signal === 'buy' ? 'sell' : 'buy')).length;
+
+    const conflicts = [];
+    if (signal === 'buy' && reversalAgainst.length > 0 && trendAgree > 0)
+      conflicts.push(`📈 Trend ขึ้น แต่ ${reversalAgainst.length} reversal agents เตือนกลับตัว`);
+    if (signal === 'sell' && reversalAgainst.length > 0 && trendAgree > 0)
+      conflicts.push(`📉 Trend ลง แต่ ${reversalAgainst.length} reversal agents เตือนกลับตัว`);
+    // HTF bias conflict (bull bias + sell signal OR bear bias + buy signal)
+    const htfConflict = (signal === 'buy' && biasHTF === 'bear') || (signal === 'sell' && biasHTF === 'bull');
+    if (htfConflict)
+      conflicts.push(`⚠️ ${stack.htf} bias ${biasHTF.toUpperCase()} สวนกับ signal ${signal.toUpperCase()}`);
+
+    // STEP 5: Verdict + Narrative
+    // แปลง bias (bull/bear) ให้ match กับ signal (buy/sell)
+    const biasMatch = (bias, sig) =>
+      (bias === 'bull' && sig === 'buy') ||
+      (bias === 'bear' && sig === 'sell') ||
+      !bias || bias === 'unknown';
+
+    let verdict, score, narrative;
+    const htfMatch = biasMatch(biasHTF, signal);
+
+    // Also fix conflict detection
+    if (!biasMatch(biasHTF, signal) && biasHTF !== 'unknown' && biasHTF && signal !== 'wait') {
+      // Already added to conflicts above — fix that check too
+    }
+
+    if (!htfMatch) {
+      verdict = '🔴 SKIP';
+      score = 'D';
+      narrative = `HTF (${stack.htf}) trend = ${biasHTF.toUpperCase()} แต่จะ ${signal.toUpperCase()} = สวนทาง. อย่าเทรดสวน HTF.`;
+    } else if (conflicts.length >= 2) {
+      verdict = '🟠 WAIT';
+      score = 'C';
+      narrative = `เจอ conflict ${conflicts.length} จุด — รอ confirmation ก่อน`;
+    } else if (aligned && structureSupport >= 1 && triggerForSignal) {
+      verdict = '🟢 STRONG GO';
+      score = 'A';
+      narrative = `${dominantBias.toUpperCase()} aligned ทั้ง ${stack.htf}+${stack.mtf}+${stack.ltf} + structure support + LTF trigger ครบ — textbook setup`;
+    } else if (aligned && (structureSupport >= 1 || triggerForSignal)) {
+      verdict = '🟢 GO';
+      score = 'B';
+      narrative = `${dominantBias.toUpperCase()} aligned + ${structureSupport >= 1 ? 'structure' : 'trigger'} support — setup ดี`;
+    } else if (htfMatch && triggerForSignal) {
+      verdict = '🟡 SMALL GO';
+      score = 'C';
+      narrative = `HTF support แต่ MTF/LTF ยังไม่ align — เข้า size ครึ่ง`;
+    } else {
+      verdict = '🟠 WAIT';
+      score = 'C';
+      narrative = `ยังไม่ครบเงื่อนไข — ดู structure/trigger ก่อน`;
+    }
+
+    return {
+      stack: stack.label,
+      bias: { htf: biasHTF, mtf: biasMTF, ltf: biasLTF, aligned, dominant: dominantBias },
+      structure: { support: structureSupport, dissent: structureDissent, total: structureSignals.length },
+      trigger: { for: triggerForSignal, against: reversalAgainst.length },
+      conflicts,
+      verdict,
+      score,
+      narrative,
+      htfTF: stack.htf, mtfTF: stack.mtf, ltfTF: stack.ltf,
+    };
+  },
+
+  /** Render Setup Analysis panel */
+  render(td, signal) {
+    if (!td) return '';
+    const arrow = (b) => b === 'bull' ? '🟢 ↑' : b === 'bear' ? '🔴 ↓' : '⚪ —';
+    const sigEmoji = signal === 'buy' ? '▲' : signal === 'sell' ? '▼' : '⏸';
+    const vColor = td.verdict.includes('STRONG') || td.verdict.includes('GO') ? 'var(--green)'
+                 : td.verdict.includes('WAIT') ? 'var(--yellow)'
+                 : td.verdict.includes('SMALL') ? 'var(--orange)'
+                 : 'var(--red)';
+
+    return `
+      <div style="margin-top:8px;background:var(--bg-dark);border:2px solid ${vColor};padding:8px 10px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:8px;color:var(--gold)">📊 TOP-DOWN ANALYSIS (${td.stack})</span>
+          <span style="font-size:10px;color:${vColor};font-weight:bold">${td.verdict}</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:7px;margin-bottom:6px">
+          <div style="text-align:center;padding:4px;background:var(--bg-card);border:1px solid var(--border)">
+            <div style="color:var(--gold)">${td.htfTF.toUpperCase()} (Bias)</div>
+            <div style="font-size:10px;margin-top:2px">${arrow(td.bias.htf)}</div>
+          </div>
+          <div style="text-align:center;padding:4px;background:var(--bg-card);border:1px solid var(--border)">
+            <div style="color:var(--teal)">${td.mtfTF.toUpperCase()} (Structure)</div>
+            <div style="font-size:10px;margin-top:2px">${arrow(td.bias.mtf)}</div>
+          </div>
+          <div style="text-align:center;padding:4px;background:var(--bg-card);border:1px solid var(--border)">
+            <div style="color:var(--purple)">${td.ltfTF.toUpperCase()} (Trigger)</div>
+            <div style="font-size:10px;margin-top:2px">${arrow(td.bias.ltf)}</div>
+          </div>
+        </div>
+
+        <div class="trade-params" style="font-size:6px">
+          <div class="row"><span class="lbl">Structure agents</span><span class="val ${td.structure.support > td.structure.dissent ? 'up' : 'dn'}">${td.structure.support}/${td.structure.total} support ${sigEmoji}</span></div>
+          <div class="row"><span class="lbl">Reversal trigger</span><span class="val ${td.trigger.for ? 'up' : 'warn'}">${td.trigger.for ? '✓ มี' : '○ ยังไม่มี'} ${td.trigger.against > 0 ? '(⚠️ ' + td.trigger.against + ' เตือนกลับตัว)' : ''}</span></div>
+          <div class="row"><span class="lbl">MTF aligned</span><span class="val ${td.bias.aligned ? 'up' : 'warn'}">${td.bias.aligned ? '✅ ครบทุก TF' : '⚠️ Mixed'}</span></div>
+        </div>
+
+        ${td.conflicts.length > 0 ? `
+        <div style="margin-top:6px;padding:4px 6px;background:rgba(255,140,0,0.1);border-left:2px solid var(--orange);font-size:6px;color:var(--orange)">
+          ${td.conflicts.map(c => `⚠️ ${c}`).join('<br>')}
+        </div>` : ''}
+
+        <div style="margin-top:6px;padding:4px 6px;background:rgba(157,78,221,0.1);border-left:2px solid var(--purple);font-size:7px;color:var(--white);font-style:italic">
+          💬 "${td.narrative}"
+        </div>
+      </div>
+    `;
+  },
+};
+window.TopDownAnalyzer = TopDownAnalyzer;
+
 window.KeepAlive    = KeepAlive;
 window.SignalGrade  = SignalGrade;
 window.Settings     = Settings;
