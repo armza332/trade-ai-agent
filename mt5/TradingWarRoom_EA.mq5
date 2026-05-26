@@ -122,6 +122,8 @@ void OnDeinit(const int reason) {
       if (bbHandle[i]  != INVALID_HANDLE) IndicatorRelease(bbHandle[i]);
       if (atrHandle[i] != INVALID_HANDLE) IndicatorRelease(atrHandle[i]);
    }
+   RemoveDashboard();      // Phase 12.5: cleanup OBJ_LABEL items
+   Comment("");            // clear any leftover Comment text
    Print("🛑 EA stopped — reason ", reason);
 }
 
@@ -335,50 +337,171 @@ void UpdateTodayStats() {
    }
 }
 
-//═══════════════════ ON-CHART DASHBOARD ═════════════════════════════
+//═══════════════════ ON-CHART DASHBOARD — BOSS MODE ════════════════
+// Uses OBJ_RECTANGLE_LABEL + OBJ_LABEL for real graphics
+// (replaces plain Comment() — far more impressive)
+#define DASH_PFX  "TWR_DASH_"
+#define DASH_W    340
+#define DASH_X    10
+#define DASH_Y    20
+
+// helper: create / update label
+void DashLabel(string id, int x, int y, string text, color clr, int fontSize=8, string font="Consolas") {
+   string name = DASH_PFX + id;
+   if (ObjectFind(0, name) < 0) {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetString (0, name, OBJPROP_FONT, font);
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetString (0, name, OBJPROP_TEXT, text);
+}
+
+void DashRect(string id, int x, int y, int w, int h, color bg, color border, int borderW=1) {
+   string name = DASH_PFX + id;
+   if (ObjectFind(0, name) < 0) {
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE,     w);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE,     h);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR,   bg);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE,  BORDER_FLAT);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, borderW);
+}
+
+string ProgressBar(double pct, int width) {
+   if (pct < 0) pct = 0; if (pct > 1) pct = 1;
+   int filled = (int)MathRound(pct * width);
+   string s = "";
+   for (int i = 0; i < width; i++) s += (i < filled) ? "█" : "░";
+   return s;
+}
+
 void UpdateDashboard() {
-   string p = "";
-   p += "╔═════════════════════════════╗\n";
-   p += "║  🤖 TRADING WAR ROOM v1.0    ║\n";
-   p += "╚═════════════════════════════╝\n";
-   p += StringFormat("⏰ %s  | Server time\n",
-        TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES));
-   p += "─────────────────────────────\n";
-   p += StringFormat("💰 Balance:  $%.2f\n", AccountInfoDouble(ACCOUNT_BALANCE));
-   p += StringFormat("📊 Equity:   $%.2f\n", AccountInfoDouble(ACCOUNT_EQUITY));
-   p += StringFormat("💵 Today P/L: $%+.2f  (%dW/%dL)\n", pnlToday, tradesToday_W, tradesToday_L);
-   p += "─────────────────────────────\n";
+   int y = DASH_Y;
+
+   // ── Outer panel ──
+   DashRect("PANEL", DASH_X, y, DASH_W, 280,
+            C'10,15,25',           // bg: dark blue-black
+            C'0,255,200',          // border: cyan
+            2);
+
+   // ── Header ──
+   DashLabel("TITLE", DASH_X+12, y+8,
+             eaPaused ? "▼ TRADING WAR ROOM — PAUSED ▼" : "▲ TRADING WAR ROOM — BOSS MODE ▲",
+             eaPaused ? C'255,140,0' : C'0,255,200',
+             10, "Consolas Bold");
+   DashLabel("CLOCK", DASH_X+12, y+28,
+             TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES) + "  " + (IsLondonNYSession() ? "[LDN/NY]" : "[ASIA]"),
+             IsLondonNYSession() ? C'255,230,0' : C'128,128,128',
+             7);
+
+   // ── Account block ──
+   y += 50;
+   DashRect("ACC_BG", DASH_X+8, y, DASH_W-16, 70,
+            C'18,28,40', C'0,180,140', 1);
+
+   double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
+   double fm  = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   double pnlPct = (bal > 0) ? (pnlToday / bal * 100.0) : 0;
+   color pnlClr = pnlToday > 0 ? C'0,255,100' : (pnlToday < 0 ? C'255,80,80' : C'180,180,180');
+
+   DashLabel("ACC_LBL", DASH_X+16, y+5, "ACCOUNT", C'0,255,200', 7);
+   DashLabel("BAL",     DASH_X+16, y+22, StringFormat("BAL  $%.2f", bal),  C'255,255,255', 9);
+   DashLabel("EQ",      DASH_X+150, y+22, StringFormat("EQ  $%.2f", eq),  C'200,200,200', 9);
+   DashLabel("PNL",     DASH_X+16, y+42, StringFormat("P/L  $%+.2f  (%+.2f%%)  W%d L%d",
+                                                       pnlToday, pnlPct, tradesToday_W, tradesToday_L),
+             pnlClr, 9);
+
+   // ── Live Watch block ──
+   y += 80;
+   DashRect("WATCH_BG", DASH_X+8, y, DASH_W-16, 92,
+            C'18,28,40', C'255,200,0', 1);
+   DashLabel("WATCH_LBL", DASH_X+16, y+5, "LIVE WATCH", C'255,230,0', 7);
 
    int nSyms = EnableSymbol2 ? 2 : 1;
+   string watchList[3] = {WatchXAU, Symbol1, Symbol2};
+   int watchCount = (StringLen(WatchXAU) > 0 ? 1 : 0) + nSyms;
+   if (watchCount > 3) watchCount = 3;
+
+   for (int i = 0; i < watchCount; i++) {
+      string sym = watchList[i];
+      if (StringLen(sym) == 0 || !SymbolSelect(sym, true)) continue;
+
+      double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+      int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+
+      // try get H1 RSI
+      int hRsi = iRSI(sym, PERIOD_H1, 14, PRICE_CLOSE);
+      double rsiArr[]; ArraySetAsSeries(rsiArr, true);
+      double rsi = 50;
+      if (hRsi != INVALID_HANDLE) {
+         if (CopyBuffer(hRsi, 0, 0, 1, rsiArr) > 0) rsi = rsiArr[0];
+         IndicatorRelease(hRsi);
+      }
+
+      color sigClr = C'180,180,180';
+      string sigTag = "WAIT ";
+      if (rsi < RSIOversold)      { sigClr = C'0,255,100'; sigTag = "BUY  "; }
+      else if (rsi > RSIOverbought) { sigClr = C'255,80,80'; sigTag = "SELL "; }
+
+      int posCnt = CountPositions(sym);
+      string symShort = StringSubstr(sym, 0, 6);
+      string line = StringFormat("%-7s %s  $%-10s RSI %5.1f  P:%d",
+                                  symShort, sigTag,
+                                  DoubleToString(bid, digits),
+                                  rsi, posCnt);
+      DashLabel("WATCH_" + IntegerToString(i), DASH_X+16, y+22 + i*18, line, sigClr, 8);
+   }
+
+   // ── System block ──
+   y += 100;
+   DashRect("SYS_BG", DASH_X+8, y, DASH_W-16, 56,
+            C'18,28,40', C'120,80,255', 1);
+   DashLabel("SYS_LBL", DASH_X+16, y+5, "SYSTEM", C'170,140,255', 7);
+
+   string webStatus = (StringLen(WebhookURL) > 10) ? StringFormat("WEB %ds OK", WebPushSec) : "WEB OFF";
+   color  webClr    = (StringLen(WebhookURL) > 10) ? C'0,255,200' : C'128,128,128';
+   string trade_status = eaPaused ? "▮▮ PAUSED" : "▶ TRADING";
+   color  tradeClr  = eaPaused ? C'255,140,0' : C'0,255,100';
+
+   DashLabel("SYS_LINE1", DASH_X+16, y+22,
+             StringFormat("%s    %s", trade_status, webStatus),
+             tradeClr, 8);
+   DashLabel("SYS_LINE2", DASH_X+16, y+38,
+             StringFormat("Risk %.1f%%  R:R 1:%.1f  Magic %d", RiskPercent, RewardRiskRatio, MagicNumber),
+             C'160,160,160', 7);
+
+   // ── Footer signal hunt bar ──
+   y += 62;
+   double cooldownLeft = 0;
    for (int i = 0; i < nSyms; i++) {
-      double rsi[]; ArraySetAsSeries(rsi, true);
-      double bbU[], bbL[]; ArraySetAsSeries(bbU, true); ArraySetAsSeries(bbL, true);
-      bool ok = (CopyBuffer(rsiHandle[i], 0, 0, 2, rsi) == 2) &&
-                (CopyBuffer(bbHandle[i], 1, 0, 2, bbU) == 2) &&
-                (CopyBuffer(bbHandle[i], 2, 0, 2, bbL) == 2);
-      if (!ok) continue;
-
-      double bid = SymbolInfoDouble(symbols[i], SYMBOL_BID);
-      double mid = bid;
-      string sigEmoji = "⚪";
-      string sigText  = "WAIT";
-      if (rsi[0] < RSIOversold && mid <= bbL[0] * 1.001)      { sigEmoji = "🟢"; sigText = "BUY watch"; }
-      else if (rsi[0] > RSIOverbought && mid >= bbU[0] * 0.999) { sigEmoji = "🔴"; sigText = "SELL watch"; }
-
-      int posCnt = CountPositions(symbols[i]);
-      p += StringFormat("💎 %s   %s %s\n", symbols[i], sigEmoji, sigText);
-      p += StringFormat("   RSI %.1f  | Pos: %d\n", rsi[0], posCnt);
+      double remain = SignalCooldownMin * 60 - (TimeCurrent() - lastSignalTime[i]);
+      if (remain > cooldownLeft) cooldownLeft = remain;
    }
+   double cdPct = 1.0 - (cooldownLeft / (SignalCooldownMin * 60.0));
+   string bar = ProgressBar(cdPct, 22);
+   DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)cdPct*100) + "%",
+             cdPct >= 1 ? C'0,255,100' : C'255,230,0', 8, "Consolas");
+}
 
-   p += "─────────────────────────────\n";
-   string sessionTxt = IsLondonNYSession() ? "🟢 London/NY ACTIVE" : "🟡 Asia / Off-hours";
-   p += sessionTxt + "\n";
-   if (StringLen(WebhookURL) > 10) {
-      p += StringFormat("🌐 Web sync: ON (every %ds)\n", WebPushSec);
-   }
-   p += "═════════════════════════════";
-
-   Comment(p);
+// Cleanup dashboard objects on deinit
+void RemoveDashboard() {
+   ObjectsDeleteAll(0, DASH_PFX);
 }
 
 //═══════════════════ WEB BRIDGE ═════════════════════════════════════
