@@ -1796,8 +1796,11 @@ const BotBridge = {
           <tbody>${posRows}</tbody>
         </table>
       </div>
-      <div style="margin-top:4px;font-size:6px;color:var(--gray)">
-        Symbols: ${(s.symbols || []).join(', ')} · Updated ${s.ageSec}s ago
+      <div style="margin-top:4px;font-size:6px;color:var(--gray);line-height:1.7">
+        <span style="color:var(--gold)">⚡ TRADING:</span> ${(s.tradeSymbols || s.symbols || []).filter(Boolean).join(', ') || '—'}
+        ${s.watchSymbols && s.watchSymbols[0] ? ` · <span style="color:var(--teal)">👁 WATCH:</span> ${s.watchSymbols.filter(Boolean).join(', ')}` : ''}
+        ${s.mode ? ` · <span style="color:var(--purple)">MODE:</span> <b style="color:${s.mode === 'scalp' ? 'var(--orange)' : 'var(--green)'}">${s.mode === 'scalp' ? '⚡ SCALP M1' : '🌊 SWING'}</b>` : ''}
+        · Updated ${s.ageSec}s ago
       </div>
 
       <!-- Phase 12.6: Live AI Training Status -->

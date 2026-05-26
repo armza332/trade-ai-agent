@@ -587,11 +587,26 @@ void PushToWeb() {
    // ── Phase 12.3: Real-time prices for Web analysis ──
    string pxJson = BuildPricesJson();
 
+   // Build symbols list: WatchXAU (if set) + Symbol1 + Symbol2 (if enabled)
+   string symList = "";
+   if (StringLen(WatchXAU) > 0) symList += "\"" + WatchXAU + "\"";
+   if (StringLen(Symbol1) > 0) {
+      if (StringLen(symList) > 0) symList += ",";
+      symList += "\"" + Symbol1 + "\"";
+   }
+   if (EnableSymbol2 && StringLen(Symbol2) > 0) {
+      if (StringLen(symList) > 0) symList += ",";
+      symList += "\"" + Symbol2 + "\"";
+   }
+
    string json = StringFormat(
       "{\"type\":\"status\",\"secret\":\"%s\",\"ts\":%d,"
       "\"balance\":%.2f,\"equity\":%.2f,\"freeMargin\":%.2f,"
       "\"todayWins\":%d,\"todayLosses\":%d,\"todayPnL\":%.2f,"
-      "\"symbols\":[\"%s\",\"%s\"],"
+      "\"symbols\":[%s],"
+      "\"tradeSymbols\":[\"%s\",\"%s\"],"
+      "\"watchSymbols\":[\"%s\"],"
+      "\"mode\":\"%s\","
       "\"paused\":%s,"
       "\"prices\":%s,"
       "\"positions\":[%s]}",
@@ -600,7 +615,10 @@ void PushToWeb() {
       AccountInfoDouble(ACCOUNT_EQUITY),
       AccountInfoDouble(ACCOUNT_MARGIN_FREE),
       tradesToday_W, tradesToday_L, pnlToday,
+      symList,
       Symbol1, Symbol2,
+      WatchXAU,
+      (ScalpMode ? "scalp" : "swing"),
       (eaPaused ? "true" : "false"),
       pxJson,
       posJson
