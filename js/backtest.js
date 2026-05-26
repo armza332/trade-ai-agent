@@ -58,15 +58,21 @@ const Backtest = {
       let pairTeam = null;
       if (!team) {
         // For forex, create a single-pair analyzer
+        // Phase 14.4 fix: include ALL agents that XAU GoldTeam has (except MTF — needs market.candles)
+        const newsPairs = symbol === 'AUDUSD' ? ['AUD','USD'] : ['EUR','USD'];
         pairTeam = {
-          head:      new HeadAgent('BT', symbol, symbol),
-          smc:       new SMCAgent(symbol),
-          elliott:   new ElliottWaveAgent(symbol),
-          fib:       new FibonacciAgent(symbol),
-          rsi:       new RSIValueAgent(symbol),
-          macd:      new MACDAgent(symbol),
-          bollinger: new BollingerAgent(symbol),
-          pattern:   new PatternAgent(symbol),
+          head:       new HeadAgent('BT', symbol, symbol),
+          smc:        new SMCAgent(symbol),
+          elliott:    new ElliottWaveAgent(symbol),
+          fib:        new FibonacciAgent(symbol),
+          rsi:        new RSIValueAgent(symbol),
+          macd:       new MACDAgent(symbol),
+          bollinger:  new BollingerAgent(symbol),
+          pattern:    new PatternAgent(symbol),
+          divergence: new DivergenceAgent(symbol),    // ← FIX: was missing
+          ichimoku:   new IchimokuAgent(symbol),       // ← FIX: was missing (Phase 14)
+          dxy:        new DXYAgent(symbol),             // ← FIX: was missing (Phase 14)
+          news:       new NewsAgent('BT', newsPairs),   // ← FIX: was missing
         };
       }
 
@@ -151,13 +157,18 @@ const Backtest = {
           } else if (pairTeam) {
             const agents = [];
             const collect = (r, key) => { if (r) { agentReports[key] = r; agents.push(r); } };
-            if (Settings.get('enableSMC', true))       collect(pairTeam.smc.analyze(fakeData),       'smc');
-            if (Settings.get('enableElliott', true))   collect(pairTeam.elliott.analyze(fakeData),   'elliott');
-            if (Settings.get('enableFib', true))       collect(pairTeam.fib.analyze(fakeData),       'fib');
-            if (Settings.get('enableRSI', true))       collect(pairTeam.rsi.analyze(fakeData),       'rsi');
-            if (Settings.get('enableMACD', true))      collect(pairTeam.macd.analyze(fakeData),      'macd');
-            if (Settings.get('enableBollinger', true)) collect(pairTeam.bollinger.analyze(fakeData), 'bollinger');
-            if (Settings.get('enablePattern', true))   collect(pairTeam.pattern.analyze(fakeData),   'pattern');
+            if (Settings.get('enableSMC', true))        collect(pairTeam.smc.analyze(fakeData),        'smc');
+            if (Settings.get('enableElliott', true))    collect(pairTeam.elliott.analyze(fakeData),    'elliott');
+            if (Settings.get('enableFib', true))        collect(pairTeam.fib.analyze(fakeData),        'fib');
+            if (Settings.get('enableRSI', true))        collect(pairTeam.rsi.analyze(fakeData),        'rsi');
+            if (Settings.get('enableMACD', true))       collect(pairTeam.macd.analyze(fakeData),       'macd');
+            if (Settings.get('enableBollinger', true))  collect(pairTeam.bollinger.analyze(fakeData),  'bollinger');
+            if (Settings.get('enablePattern', true))    collect(pairTeam.pattern.analyze(fakeData),    'pattern');
+            // Phase 14.4 fix: add the 4 missing agents (parity with GoldTeam)
+            if (Settings.get('enableDivergence', true)) collect(pairTeam.divergence.analyze(fakeData), 'divergence');
+            if (Settings.get('enableIchimoku', true))   collect(pairTeam.ichimoku.analyze(fakeData),   'ichimoku');
+            if (Settings.get('enableDXY', true))        collect(pairTeam.dxy.analyze(fakeData),        'dxy');
+            if (Settings.get('enableNews', true))       collect(pairTeam.news.analyze(),               'news');
             const agg = pairTeam.head.aggregate(agents);
             res = { head: { signal: agg.signal, conf: agg.conf } };
           }
@@ -171,7 +182,7 @@ const Backtest = {
 
               // Snapshot agent votes + regime for KB feedback
               const prefix = symbol === 'XAUUSD' ? 'Gold' : (symbol === 'AUDUSD' ? 'AUD' : 'EUR');
-              const nameMap = { smc:'SMC', elliott:'Elliott', fib:'Fib', rsi:'RSI', macd:'MACD', bollinger:'Bollinger', pivot:'Pivot', pattern:'Pattern', mtf:'MTF', news:'News' };
+              const nameMap = { smc:'SMC', elliott:'Elliott', fib:'Fib', rsi:'RSI', macd:'MACD', bollinger:'Bollinger', pivot:'Pivot', pattern:'Pattern', divergence:'Divergence', mtf:'MTF', ichimoku:'Ichimoku', dxy:'DXY', news:'News' };
               const votes = Object.entries(agentReports).map(([key, r]) => ({
                 agent: `${prefix}-${nameMap[key] || key}`,
                 signal: r.signal,
