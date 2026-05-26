@@ -624,7 +624,7 @@ void UpdateDashboard() {
    // ── Footer signal hunt bar ──
    y += 62;
    double cooldownLeft = 0;
-   for (int i = 0; i < nSyms; i++) {
+   for (int i = 0; i < nActiveSyms; i++) {
       double remain = (double)(effCooldownMin * 60) - (double)(TimeCurrent() - lastSignalTime[i]);
       if (remain > cooldownLeft) cooldownLeft = remain;
    }
