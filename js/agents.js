@@ -768,6 +768,8 @@ class NewsAgent extends BaseAgent {
   _generateEvents() {
     const now    = new Date();
     const hUtc   = now.getUTCHours();
+    const mUtc   = now.getUTCMinutes();
+    const nowMin = hUtc * 60 + mUtc;
     const day    = now.getUTCDay();
 
     // No events on weekends (markets closed)
@@ -775,17 +777,37 @@ class NewsAgent extends BaseAgent {
 
     const todays = this._calendar();
 
-    // Filter:
-    //   1) only events RELEVANT to this team's pairs
-    //   2) only events within ±6 hours of current UTC time (recent or upcoming)
-    const filtered = todays.filter(e => {
-      if (!this.pairs.some(p => e.curr.includes(p))) return false;
-      const [eh] = e.time.split(':').map(Number);
-      const diff = Math.abs(eh - hUtc);
-      return diff <= 6 || diff >= 18; // within 6h either direction (wraps midnight)
-    });
+    // Compute minutes-away for each event (negative = past, positive = upcoming)
+    const enriched = todays
+      .filter(e => this.pairs.some(p => e.curr.includes(p)))
+      .map(e => {
+        const [eh, em] = e.time.split(':').map(Number);
+        const eMin = eh * 60 + (em || 0);
+        const minutesAway = eMin - nowMin;
+        // Human-readable countdown
+        let when;
+        if (minutesAway >= 0) {
+          const h = Math.floor(minutesAway / 60);
+          const m = minutesAway % 60;
+          when = h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+        } else {
+          const past = -minutesAway;
+          const h = Math.floor(past / 60);
+          const m = past % 60;
+          when = h > 0 ? `${h}h ${m}m ago` : `${m}m ago`;
+        }
+        return { ...e, minutesAway, when };
+      })
+      // Within ±6h window (past 6h to next 6h)
+      .filter(e => Math.abs(e.minutesAway) <= 360)
+      // Sort: upcoming events first, then most-recent past
+      .sort((a, b) => {
+        if (a.minutesAway >= 0 && b.minutesAway < 0) return -1;
+        if (a.minutesAway < 0 && b.minutesAway >= 0) return 1;
+        return Math.abs(a.minutesAway) - Math.abs(b.minutesAway);
+      });
 
-    return filtered.slice(0, 4);
+    return enriched.slice(0, 4);
   }
 
   analyze() {

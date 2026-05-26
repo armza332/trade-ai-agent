@@ -69,16 +69,30 @@ const UI = {
     const events = r.events || [];
     return `<div class="news-analyst">
       <div class="news-header">📰 NEWS INTEL — <span class="${UI.sigColor(newsResult.signal)}">${UI.sigText(newsResult.signal)}</span> (${newsResult.conf}%)</div>
-      ${events.map(e => `
+      ${events.length === 0
+        ? `<div class="news-item" style="color:var(--gray);font-size:6px">— no events within ±6h —</div>`
+        : events.map(e => {
+            const isPast = e.minutesAway < 0;
+            const whenCol = e.minutesAway > 0 && e.minutesAway <= 60 ? 'var(--red)'
+                         : e.minutesAway > 0                          ? 'var(--yellow)'
+                         : isPast                                     ? 'var(--gray)'
+                                                                      : 'var(--white)';
+            return `
         <div class="news-item">
           <div class="impact impact-${e.impact}"></div>
-          <span class="time">${e.time} UTC</span>
+          <span class="time" style="color:${whenCol}">${e.time}</span>
           <span class="title">${e.event}</span>
+          <span style="font-size:5px;color:${whenCol};margin-left:auto">${e.when || ''}</span>
           <span class="bias news-bias-${e.bias === 'bullish' || e.bias === 'hawkish' ? 'bull' : e.bias === 'bearish' || e.bias === 'dovish' ? 'bear' : 'neutral'}">
             ${e.bias === 'bullish' || e.bias === 'hawkish' ? '▲' : e.bias === 'bearish' || e.bias === 'dovish' ? '▼' : '●'}
           </span>
-        </div>`).join('')}
+        </div>`;
+        }).join('')}
       <div class="news-summary">${r.nearEvent} | ${r.bias} | Risk: ${r.risk?.split(' — ')[0] ?? ''}</div>
+      <div style="font-size:5px;color:var(--gray);padding:2px 4px;text-align:right;font-style:italic">
+        📅 Typical schedule (not live) — for real events check
+        <a href="https://www.forexfactory.com/calendar" target="_blank" style="color:var(--teal)">ForexFactory</a>
+      </div>
     </div>`;
   },
 
