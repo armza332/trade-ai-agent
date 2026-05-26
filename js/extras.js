@@ -1136,34 +1136,76 @@ const AgentScores = {
       </tr>`;
     }).join('');
 
+    // Phase 14.3: Per-symbol recommendation cards (all 3 side-by-side)
+    const perSymbolCards = rec.map(s => {
+      const symEm = s.symbol === 'XAUUSD' ? '🥇' : s.symbol === 'AUDUSD' ? '🇦🇺' : '🇪🇺';
+      const sym3  = s.symbol.replace('USD','');
+      const eligible = s.totalR > 30 && s.winnerCount >= 2;
+      const dataLow = (s.agentCount > 0 && s.topAgents.reduce((sum, a) => sum + (a.T || 0), 0) < 200);
+      const v = s.totalR > 100 ? { txt:'🟢 STRONG', col:'var(--green)' }
+              : s.totalR > 30  ? { txt:'🟡 OK',     col:'var(--yellow)' }
+              : s.totalR > 0   ? { txt:'🟠 WEAK',   col:'var(--orange)' }
+              :                   { txt:'🔴 NONE',  col:'var(--red)' };
+      const winTags = s.topAgents.slice(0,4).map(a =>
+        `<span style="font-size:5px;background:rgba(0,255,65,0.15);padding:1px 4px;margin-right:2px;color:var(--green)">${a.shortName} ${a.acc}%</span>`
+      ).join('') || '<span style="font-size:5px;color:var(--gray)">— ยังไม่มี winner —</span>';
+      return `
+        <div style="flex:1;min-width:0;padding:6px;border:1px solid ${v.col};background:rgba(255,255,255,0.02)">
+          <div style="font-size:8px;margin-bottom:3px">
+            ${symEm} <b style="color:var(--gold)">${sym3}</b>
+            <span style="float:right;color:${v.col};font-size:7px">${v.txt}</span>
+          </div>
+          <div style="font-size:6px;color:var(--gray);margin-bottom:4px">
+            R: <b style="color:${s.totalR > 0 ? 'var(--green)' : 'var(--red)'}">${s.totalR > 0 ? '+' : ''}${s.totalR.toFixed(0)}</b> ·
+            Win agents: <b>${s.winnerCount}/${s.agentCount}</b>
+            ${dataLow ? '<br><span style="color:var(--orange)">⚠ ข้อมูลน้อย — ต้อง backtest เพิ่ม</span>' : ''}
+          </div>
+          <div style="font-size:5px;color:var(--gray);margin-bottom:3px">TOP AGENTS:</div>
+          <div>${winTags}</div>
+          <div style="margin-top:5px;font-size:5px;text-align:center;color:${eligible ? 'var(--green)' : 'var(--gray)'}">
+            ${eligible ? '✅ จะเปิดใน Apply' : '⏸ จะ skip (R/winner ต่ำ)'}
+          </div>
+        </div>`;
+    }).join('');
+
     return `
       <div style="margin-top:14px;background:linear-gradient(90deg,rgba(0,255,65,0.1),transparent);border:2px solid var(--green);padding:10px">
         <div style="font-size:9px;color:var(--green);margin-bottom:6px">🎯 RECOMMENDED STRATEGY (จาก KB ของคุณ)</div>
         <div style="font-size:11px;color:var(--gold);margin:4px 0">
           ${symEmoji} <b>เทรด ${best.symbol}</b> เป็นหลัก — ${verdict}
+          <span style="font-size:6px;color:var(--gray);margin-left:6px">(symbol ที่เก่งที่สุด)</span>
         </div>
         <div style="font-size:7px;color:var(--white);padding:4px 0">
-          ✅ <b>เปิด:</b> ${topList}
+          ✅ <b>Winner agents:</b> ${topList}
         </div>
         ${best.worstAgents.length > 0 ? `
         <div style="font-size:7px;color:var(--white);padding:4px 0">
-          ❌ <b>ปิด:</b> ${badList}
+          ❌ <b>Loser agents:</b> ${badList}
         </div>` : ''}
         <div style="font-size:6px;color:var(--gray);padding:4px 0">
           Total agents profitable: <b style="color:var(--green)">${best.winnerCount}/${best.agentCount}</b> ·
           Combined R: <b style="color:${best.totalR > 0 ? 'var(--green)' : 'var(--red)'}">${best.totalR > 0 ? '+' : ''}${best.totalR.toFixed(0)}R</b>
         </div>
-        <div style="margin-top:6px">
-          <button class="btn btn-primary" style="border-color:var(--green);color:var(--green)" onclick="AgentScores.applyRecommended()">⚡ Apply ทันที (1 คลิก)</button>
-        </div>
-      </div>
 
-      <div style="margin-top:6px;font-size:7px;color:var(--gold)">⚖️ เปรียบเทียบ symbols อื่นๆ</div>
-      <div class="j-table-wrap" style="max-height:120px">
-        <table class="j-table" style="font-size:6px">
-          <thead><tr><th>Symbol</th><th>Total R</th><th>Profitable</th><th>Top Winners</th></tr></thead>
-          <tbody>${otherRows}</tbody>
-        </table>
+        <!-- Phase 14.3: Per-symbol breakdown — ALL 3 SIDE BY SIDE -->
+        <div style="margin-top:10px;font-size:7px;color:var(--gold);border-top:1px dashed var(--border);padding-top:8px">
+          ⚖️ Per-Symbol Strategy (Apply จะใช้ best agents <b>แยกตาม symbol</b>)
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          ${perSymbolCards}
+        </div>
+
+        <div style="margin-top:10px;display:flex;gap:6px">
+          <button class="btn btn-primary" style="border-color:var(--green);color:var(--green);flex:1" onclick="AgentScores.applyRecommended()">
+            ⚡ Smart Apply (เปิด winners ทุก symbol)
+          </button>
+          <button class="btn btn-secondary" style="font-size:6px" onclick="if(confirm('ใส่ Auto-Optimize แค่ EURUSD เพื่อเพิ่ม data?')){ Modal.open('backtest'); setTimeout(()=>{ const s=document.getElementById('bt-symbol'); if(s){s.value='EURUSD';s.dispatchEvent(new Event('change'));} }, 200); }">
+            📊 Train EUR
+          </button>
+        </div>
+        <div style="margin-top:4px;font-size:5px;color:var(--gray);text-align:center;font-style:italic">
+          Smart Apply เปิด/ปิด symbol + agent อัตโนมัติ — KB filter ทำงานต่อแยกตาม symbol
+        </div>
       </div>
     `;
   },
