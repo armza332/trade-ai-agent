@@ -880,9 +880,15 @@ const AgentScores = {
       if (s && s.t >= this.MIN_TRADES) {
         const acc  = s.w / s.t;
         const avgR = s.R / s.t;
-        // Score: accuracy delta (50% baseline) + avgR contribution
+        // Score: accuracy delta + avgR
         const score = (acc - 0.5) * 2 + Math.max(-0.6, Math.min(0.6, avgR * 0.5));
-        return Math.max(0.2, Math.min(2.5, 1.0 + score));
+        let w = Math.max(0.2, Math.min(2.5, 1.0 + score));
+        // Hard penalty: any agent with negative total R caps at 0.5
+        // (filter จะ skip ทันที — ไม่ปล่อยให้ vote)
+        if (s.R < 0 && s.t >= 10) w = Math.min(w, 0.5);
+        // Bonus: agent with > +50R total in this bucket gets at least 1.2x
+        if (s.R > 50 && s.t >= 20) w = Math.max(w, 1.2);
+        return w;
       }
     }
     return 1.0;
@@ -920,6 +926,114 @@ const AgentScores = {
   meta() {
     const kb = this.load();
     return kb.meta || {};
+  },
+
+  /** วิเคราะห์ KB หา Best Symbol + Best Agents */
+  recommendStrategy() {
+    const kb = this.load();
+    // Group by symbol
+    const symbols = { XAUUSD: [], AUDUSD: [], EURUSD: [] };
+    Object.entries(kb.agents).forEach(([name, a]) => {
+      const sym = ['XAUUSD','AUDUSD','EURUSD'].find(s => name.startsWith(s.slice(0,3) === 'XAU' ? 'Gold' : s.slice(0,3)));
+      if (!sym) return;
+      const bucket = a[`sym_${sym}`];
+      if (!bucket || bucket.t < this.MIN_TRADES) return;
+      const acc = bucket.w / bucket.t;
+      symbols[sym].push({
+        name,
+        shortName: name.split('-')[1],
+        trades: bucket.t,
+        acc:  Math.round(acc * 100),
+        R:    bucket.R,
+        avgR: bucket.R / bucket.t,
+      });
+    });
+
+    // Score each symbol: sum of POSITIVE agents' R only
+    const symScores = {};
+    Object.entries(symbols).forEach(([sym, agents]) => {
+      const winners = agents.filter(a => a.R > 0);
+      const losers  = agents.filter(a => a.R < 0);
+      const totalR  = agents.reduce((s, a) => s + a.R, 0);
+      const winnerR = winners.reduce((s, a) => s + a.R, 0);
+      const goodAgents = winners.filter(a => a.acc >= 55 && a.R > 30).sort((a,b) => b.R - a.R);
+      const badAgents  = losers.filter(a => a.R < -30).sort((a,b) => a.R - b.R);
+      symScores[sym] = {
+        symbol: sym,
+        totalR, winnerR,
+        agentCount: agents.length,
+        winnerCount: winners.length,
+        loserCount: losers.length,
+        topAgents:  goodAgents.slice(0, 4),
+        worstAgents: badAgents.slice(0, 3),
+        score: winnerR + (winners.length * 5) - (losers.length * 3),
+      };
+    });
+
+    const sorted = Object.values(symScores).sort((a,b) => b.score - a.score);
+    return sorted;
+  },
+
+  /** Render recommended strategy panel */
+  renderRecommend() {
+    const rec = this.recommendStrategy();
+    if (rec.length === 0 || rec[0].agentCount === 0) {
+      return '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูลพอ — รัน Auto-Opt ก่อน</div>';
+    }
+
+    const best = rec[0];
+    const verdict = best.totalR > 100 ? '🟢 STRONG EDGE' :
+                    best.totalR > 30  ? '🟡 OK EDGE'      :
+                    best.totalR > 0   ? '🟠 WEAK EDGE'    :
+                                        '🔴 NO EDGE';
+
+    const symEmoji = best.symbol === 'XAUUSD' ? '🥇' : best.symbol === 'AUDUSD' ? '🇦🇺' : '🇪🇺';
+    const topList = best.topAgents.map(a =>
+      `<span class="text-green">${a.shortName} ${a.acc}% (+${a.R.toFixed(0)}R)</span>`
+    ).join(' · ') || '<span class="text-gray">none yet</span>';
+    const badList = best.worstAgents.map(a =>
+      `<span class="text-red">${a.shortName} ${a.acc}% (${a.R.toFixed(0)}R)</span>`
+    ).join(' · ') || '<span class="text-gray">none</span>';
+
+    // Compare rest
+    const otherRows = rec.slice(1).map(s => {
+      const symEm = s.symbol === 'XAUUSD' ? '🥇' : s.symbol === 'AUDUSD' ? '🇦🇺' : '🇪🇺';
+      const winList = s.topAgents.slice(0,3).map(a => `${a.shortName}(${a.acc}%)`).join(', ') || 'none';
+      return `<tr>
+        <td>${symEm} ${s.symbol}</td>
+        <td class="${s.totalR > 0 ? 'text-green' : 'text-red'}">${s.totalR > 0 ? '+' : ''}${s.totalR.toFixed(0)}R</td>
+        <td>${s.winnerCount}/${s.agentCount}</td>
+        <td style="font-size:5px">${winList}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div style="margin-top:14px;background:linear-gradient(90deg,rgba(0,255,65,0.1),transparent);border:2px solid var(--green);padding:10px">
+        <div style="font-size:9px;color:var(--green);margin-bottom:6px">🎯 RECOMMENDED STRATEGY (จาก KB ของคุณ)</div>
+        <div style="font-size:11px;color:var(--gold);margin:4px 0">
+          ${symEmoji} <b>เทรด ${best.symbol}</b> เป็นหลัก — ${verdict}
+        </div>
+        <div style="font-size:7px;color:var(--white);padding:4px 0">
+          ✅ <b>เปิด:</b> ${topList}
+        </div>
+        ${best.worstAgents.length > 0 ? `
+        <div style="font-size:7px;color:var(--white);padding:4px 0">
+          ❌ <b>ปิด:</b> ${badList}
+        </div>` : ''}
+        <div style="font-size:6px;color:var(--gray);padding:4px 0">
+          Total agents profitable: <b style="color:var(--green)">${best.winnerCount}/${best.agentCount}</b> ·
+          Combined R: <b style="color:${best.totalR > 0 ? 'var(--green)' : 'var(--red)'}">${best.totalR > 0 ? '+' : ''}${best.totalR.toFixed(0)}R</b>
+        </div>
+      </div>
+
+      <div style="margin-top:6px;font-size:7px;color:var(--gold)">⚖️ เปรียบเทียบ symbols อื่นๆ</div>
+      <div class="j-table-wrap" style="max-height:120px">
+        <table class="j-table" style="font-size:6px">
+          <thead><tr><th>Symbol</th><th>Total R</th><th>Profitable</th><th>Top Winners</th></tr></thead>
+          <tbody>${otherRows}</tbody>
+        </table>
+      </div>
+    `;
   },
 
   /** Export KB as JSON string */
@@ -1088,6 +1202,7 @@ const AgentScores = {
 
     return `
       ${progressHTML}
+      ${this.renderRecommend()}
       <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">🧠 KNOWLEDGE BASE — Regime-Aware Learning</div>
       <div style="font-size:6px;color:var(--gray);padding:4px 0">
         Live trades: <b style="color:var(--green)">${meta.liveTrades || 0}</b> |
