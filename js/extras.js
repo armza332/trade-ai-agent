@@ -130,7 +130,8 @@ const Settings = {
     cooldownMin:    5,
     priceApiKey:    '',
     priceFeedOn:    false,
-    priceRefreshSec: 120,
+    priceRefreshSec: 300,    // 5 นาที (เดิม 2 นาที — ลดการใช้ API)
+    apiSaver:        true,   // throttle aggressive
     tradeMode:      'swing',  // scalp | swing | position
     enableXAU:      true,
     enableAUD:      true,

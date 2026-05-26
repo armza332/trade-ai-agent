@@ -32,9 +32,10 @@ const TradingWarRoom = {
     // Real-price feed loop (separate cadence to respect API rate limits)
     this._realPriceLoop();
 
-    // Real candle HISTORY (much better than simulator — runs once on boot + every hour)
+    // Real candle HISTORY — once on boot + every 4 hours (was 1 hour; reduced API usage)
+    // Cache 5min ใน sessionStorage จึงไม่ refetch ซ้ำเร็วๆ
     this._loadRealHistory();
-    setInterval(() => this._loadRealHistory(), 60 * 60 * 1000);
+    setInterval(() => this._loadRealHistory(), 4 * 60 * 60 * 1000);
 
     // Mark live
     document.getElementById('live-status').textContent = 'LIVE';

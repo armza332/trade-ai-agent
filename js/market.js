@@ -2,29 +2,64 @@
    MARKET ENGINE - Price simulation + Technical Analysis
    ═══════════════════════════════════════════════════════ */
 
-/* ─── Rate Limiter (Twelve Data: max 8 req/min on free plan) ─── */
+/* ─── Persistent Rate Limiter (Twelve Data: 8/min free plan) ──
+   เก็บ timestamp ของ call ใน localStorage → ข้าม tab/reload ได้
+   maxPerMin = 5 (safety margin จากลิมิตจริง 8) */
 const RateLimiter = {
-  calls: [],
-  maxPerMin: 7,   // safety margin (one below limit)
+  KEY: 'twr_rate_calls',
+  maxPerMin: 5,
+
+  _load() {
+    try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }
+    catch { return []; }
+  },
+  _save(calls) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(calls)); } catch {}
+  },
+
   async wait() {
     const now = Date.now();
-    this.calls = this.calls.filter(t => now - t < 60000);
-    if (this.calls.length >= this.maxPerMin) {
-      const oldest = this.calls[0];
-      const waitMs = 60000 - (now - oldest) + 500;
-      if (waitMs > 0) {
-        await new Promise(r => setTimeout(r, waitMs));
-      }
+    let calls = this._load().filter(t => now - t < 60000);
+    if (calls.length >= this.maxPerMin) {
+      const oldest = calls[0];
+      const waitMs = 60000 - (now - oldest) + 1000;
+      if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+      calls = this._load().filter(t => Date.now() - t < 60000);
     }
-    this.calls.push(Date.now());
+    calls.push(Date.now());
+    this._save(calls);
   },
+
   status() {
     const now = Date.now();
-    const recent = this.calls.filter(t => now - t < 60000);
+    const recent = this._load().filter(t => now - t < 60000);
     return { recent: recent.length, max: this.maxPerMin };
   },
 };
 if (typeof window !== 'undefined') window.RateLimiter = RateLimiter;
+
+/* ─── History cache (5 min, sessionStorage — ไม่ refetch ซ้ำซ้อน) ─── */
+const HistoryCache = {
+  CACHE_MS: 5 * 60 * 1000,
+  _key(symbol, interval, size) { return `twr_hist_${symbol}_${interval}_${size}`; },
+
+  get(symbol, interval, size) {
+    try {
+      const raw = sessionStorage.getItem(this._key(symbol, interval, size));
+      if (!raw) return null;
+      const { ts, data } = JSON.parse(raw);
+      if (Date.now() - ts < this.CACHE_MS) return data;
+    } catch {}
+    return null;
+  },
+  set(symbol, interval, size, data) {
+    try {
+      sessionStorage.setItem(this._key(symbol, interval, size),
+        JSON.stringify({ ts: Date.now(), data }));
+    } catch {}
+  },
+};
+if (typeof window !== 'undefined') window.HistoryCache = HistoryCache;
 
 class MarketEngine {
   constructor() {
@@ -134,12 +169,19 @@ class MarketEngine {
     }
   }
 
-  /** Fetch candle HISTORY (replaces simulator candles entirely) */
+  /** Fetch candle HISTORY (replaces simulator candles entirely) — with cache */
   async fetchHistory(symbol, interval = '5min', size = 200, apiKey = null) {
+    // Browser cache first (saves API call)
+    const cached = HistoryCache.get(symbol, interval, size);
+    if (cached) return cached;
+
     if (this._onAppsScript()) {
       return new Promise((resolve) => {
         google.script.run
-          .withSuccessHandler(r => resolve(r || null))
+          .withSuccessHandler(r => {
+            if (r) HistoryCache.set(symbol, interval, size, r);
+            resolve(r || null);
+          })
           .withFailureHandler(() => resolve(null))
           .fetchHistory(symbol, interval, size);
       });
@@ -152,8 +194,7 @@ class MarketEngine {
       const r = await fetch(url);
       const data = await r.json();
       if (!data.values || data.status === 'error') return null;
-      // Twelve Data returns NEWEST first → reverse for chronological order
-      return data.values.reverse().map(v => ({
+      const result = data.values.reverse().map(v => ({
         open:   parseFloat(v.open),
         high:   parseFloat(v.high),
         low:    parseFloat(v.low),
@@ -161,6 +202,8 @@ class MarketEngine {
         volume: parseFloat(v.volume) || 1000,
         ts:     new Date(v.datetime).getTime(),
       })).filter(c => isFinite(c.close));
+      HistoryCache.set(symbol, interval, size, result);
+      return result;
     } catch (e) {
       return null;
     }

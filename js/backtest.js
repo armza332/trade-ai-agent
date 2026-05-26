@@ -524,16 +524,24 @@ const AutoOptimize = {
   async _refetchAll(symbols) {
     const apiKey = Settings.get('priceApiKey');
     if (!apiKey && !TradingWarRoom.market._onAppsScript()) return;
+    let refreshed = 0, cached = 0;
     for (const sym of symbols) {
       try {
+        // Check cache first — skip if data is < 5 min old
+        const cacheData = HistoryCache.get(sym, '5min', 500);
+        if (cacheData) {
+          TradingWarRoom.market.applyHistory(sym, cacheData);
+          cached++;
+          continue;
+        }
         const h = await TradingWarRoom.market.fetchHistory(sym, '5min', 500, apiKey);
         if (h && h.length > 100) {
           TradingWarRoom.market.applyHistory(sym, h);
+          refreshed++;
         }
-        await new Promise(r => setTimeout(r, 500)); // rate limit
       } catch (e) { /* silent */ }
     }
-    this._addLog(`📊 Re-fetched ${symbols.length} symbols`);
+    this._addLog(`📊 Symbols: ${refreshed} refetched, ${cached} from cache`);
   },
 
   _noImprovement(window) {
