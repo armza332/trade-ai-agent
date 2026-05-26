@@ -79,6 +79,14 @@ const TradingWarRoom = {
     if (xauEl) xauEl.querySelector('.val').textContent = prices.XAUUSD.toFixed(2);
     if (audEl) audEl.querySelector('.val').textContent = prices.AUDUSD.toFixed(4);
     if (eurEl) eurEl.querySelector('.val').textContent = prices.EURUSD.toFixed(4);
+
+    // Update API rate indicator
+    const rateEl = document.getElementById('api-rate');
+    if (rateEl && typeof RateLimiter !== 'undefined') {
+      const s = RateLimiter.status();
+      rateEl.textContent = `API: ${s.recent}/${s.max}`;
+      rateEl.style.color = s.recent >= s.max ? 'var(--red)' : s.recent >= s.max - 2 ? 'var(--yellow)' : 'var(--gray)';
+    }
   },
 
   fullUpdate() {
@@ -268,8 +276,7 @@ const TradingWarRoom = {
             this.market.applyMTF(sym, tf, h);
           }
         } catch (e) { /* silent */ }
-        // Small delay to avoid hitting Twelve Data 8 req/min limit
-        await new Promise(r => setTimeout(r, 400));
+        // RateLimiter inside fetchHistory handles throttling
       }
     }
     this._log('CMD', 'DataLoader', `⏰ Loaded MTF candles (1h+4h+D) for all symbols`);

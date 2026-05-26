@@ -2,6 +2,30 @@
    MARKET ENGINE - Price simulation + Technical Analysis
    ═══════════════════════════════════════════════════════ */
 
+/* ─── Rate Limiter (Twelve Data: max 8 req/min on free plan) ─── */
+const RateLimiter = {
+  calls: [],
+  maxPerMin: 7,   // safety margin (one below limit)
+  async wait() {
+    const now = Date.now();
+    this.calls = this.calls.filter(t => now - t < 60000);
+    if (this.calls.length >= this.maxPerMin) {
+      const oldest = this.calls[0];
+      const waitMs = 60000 - (now - oldest) + 500;
+      if (waitMs > 0) {
+        await new Promise(r => setTimeout(r, waitMs));
+      }
+    }
+    this.calls.push(Date.now());
+  },
+  status() {
+    const now = Date.now();
+    const recent = this.calls.filter(t => now - t < 60000);
+    return { recent: recent.length, max: this.maxPerMin };
+  },
+};
+if (typeof window !== 'undefined') window.RateLimiter = RateLimiter;
+
 class MarketEngine {
   constructor() {
     this.symbols = {
@@ -94,6 +118,7 @@ class MarketEngine {
     }
     if (!apiKey) return null;
     try {
+      await RateLimiter.wait();
       const url = `https://api.twelvedata.com/price?symbol=XAU/USD,AUD/USD,EUR/USD&apikey=${encodeURIComponent(apiKey)}`;
       const r = await fetch(url);
       const data = await r.json();
@@ -121,6 +146,7 @@ class MarketEngine {
     }
     if (!apiKey) return null;
     try {
+      await RateLimiter.wait();
       const tdSym = symbol.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1/$2');
       const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${interval}&outputsize=${size}&apikey=${encodeURIComponent(apiKey)}`;
       const r = await fetch(url);
