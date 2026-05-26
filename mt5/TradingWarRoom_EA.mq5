@@ -96,6 +96,7 @@ bool          eaPaused    = false;   // Phase 12.4: remote pause flag
 int           rsiHandle[MAX_SYMS], bbHandle[MAX_SYMS], atrHandle[MAX_SYMS];
 string        symbols[MAX_SYMS];
 int           nActiveSyms = 0;       // dynamically counted in OnInit
+bool          runEnabled[MAX_SYMS];  // Phase 12.9: runtime per-symbol toggle (web can flip)
 int           tradesToday_W = 0, tradesToday_L = 0;
 double        pnlToday      = 0;
 
@@ -153,6 +154,9 @@ int OnInit() {
    symbols[nActiveSyms++] = Symbol1;
    if (EnableSymbol2 && StringLen(Symbol2) > 0) symbols[nActiveSyms++] = Symbol2;
    if (EnableSymbol3 && StringLen(Symbol3) > 0) symbols[nActiveSyms++] = Symbol3;
+
+   // Phase 12.9: init runtime toggle = enabled for all active symbols
+   for (int k = 0; k < MAX_SYMS; k++) runEnabled[k] = (k < nActiveSyms);
 
    for (int i = 0; i < nActiveSyms; i++) {
       // Verify symbol exists
@@ -227,6 +231,7 @@ void OnTick() {
 
    // Trade check per symbol
    for (int i = 0; i < nActiveSyms; i++) {
+      if (!runEnabled[i]) continue;   // Phase 12.9: skip if disabled from web
       CheckSignal(symbols[i], i);
    }
 }
@@ -630,7 +635,7 @@ void UpdateDashboard() {
    }
    double cdPct = 1.0 - (cooldownLeft / (effCooldownMin * 60.0));
    string bar = ProgressBar(cdPct, 22);
-   DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)cdPct*100) + "%",
+   DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)(cdPct*100)) + "%",
              cdPct >= 1 ? C'0,255,100' : C'255,230,0', 8, "Consolas");
 }
 
@@ -678,6 +683,15 @@ void PushToWeb() {
       symList += "\"" + Symbol2 + "\"";
    }
 
+   // Phase 12.9: per-symbol enabled state (only first nActiveSyms valid)
+   string enabledJson = "[";
+   for (int e = 0; e < nActiveSyms; e++) {
+      if (e > 0) enabledJson += ",";
+      enabledJson += StringFormat("{\"sym\":\"%s\",\"on\":%s}",
+                                  symbols[e], runEnabled[e] ? "true" : "false");
+   }
+   enabledJson += "]";
+
    string json = StringFormat(
       "{\"type\":\"status\",\"secret\":\"%s\",\"ts\":%d,"
       "\"balance\":%.2f,\"equity\":%.2f,\"freeMargin\":%.2f,"
@@ -685,6 +699,7 @@ void PushToWeb() {
       "\"symbols\":[%s],"
       "\"tradeSymbols\":[\"%s\",\"%s\"],"
       "\"watchSymbols\":[\"%s\"],"
+      "\"symEnabled\":%s,"
       "\"mode\":\"%s\","
       "\"paused\":%s,"
       "\"prices\":%s,"
@@ -697,6 +712,7 @@ void PushToWeb() {
       symList,
       Symbol1, Symbol2,
       WatchXAU,
+      enabledJson,
       (ScalpMode ? "scalp" : "swing"),
       (eaPaused ? "true" : "false"),
       pxJson,
@@ -853,6 +869,16 @@ void ExecuteCommand(string cmd) {
       tradesToday_L = 0;
       pnlToday = 0;
       Print("🔄 REMOTE: Today stats reset");
+   }
+   // Phase 12.9: per-symbol enable/disable
+   else if (StringFind(cmd, "sym_") == 0) {
+      // Format: sym_1_on / sym_1_off / sym_2_on / ...
+      int idx = (int)StringToInteger(StringSubstr(cmd, 4, 1)) - 1;  // 1→0, 2→1, 3→2
+      bool on = (StringFind(cmd, "_on") > 0);
+      if (idx >= 0 && idx < MAX_SYMS && idx < nActiveSyms) {
+         runEnabled[idx] = on;
+         PrintFormat("🎚 REMOTE: Symbol %d (%s) → %s", idx+1, symbols[idx], (on ? "ON" : "OFF"));
+      }
    }
 }
 

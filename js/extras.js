@@ -1700,7 +1700,7 @@ const BotBridge = {
   },
 
   // Phase 12.4: send remote command to EA via Apps Script
-  async sendCommand(cmd) {
+  async sendCommand(cmd, opts = {}) {
     const url = Settings.get('botBridgeURL', '');
     if (!url || url.length < 20) return alert('ตั้ง Bot Bridge URL ก่อน');
     const confirmMsgs = {
@@ -1709,7 +1709,8 @@ const BotBridge = {
       resume:    '▶️ เริ่มเทรดต่อ?',
       reset_pnl: '🔄 Reset ตัวเลข W/L/PnL วันนี้?'
     };
-    if (!confirm(confirmMsgs[cmd] || ('Send: ' + cmd))) return;
+    // Symbol toggle commands don't need confirm
+    if (!cmd.startsWith('sym_') && !confirm(confirmMsgs[cmd] || ('Send: ' + cmd))) return;
     try {
       const r = await fetch(url, {
         method: 'POST',
@@ -1789,6 +1790,9 @@ const BotBridge = {
           <div style="font-size:11px;color:var(--gold);margin-top:3px">${s.todayWins}/${s.todayLosses}</div>
         </div>
       </div>
+      <!-- Phase 12.9: per-symbol enable/disable toggles -->
+      ${this.renderSymbolToggles(s)}
+
       <div style="margin-top:8px;font-size:7px;color:var(--gold)">📊 Open Positions</div>
       <div class="j-table-wrap" style="max-height:140px">
         <table class="j-table" style="font-size:6px">
@@ -1805,6 +1809,30 @@ const BotBridge = {
 
       <!-- Phase 12.6: Live AI Training Status -->
       ${this.renderLiveTraining()}
+    `;
+  },
+
+  // Phase 12.9: per-symbol enable/disable buttons
+  renderSymbolToggles(s) {
+    const list = Array.isArray(s.symEnabled) ? s.symEnabled : [];
+    if (list.length === 0) return '';
+    const buttons = list.map((e, idx) => {
+      const on = e.on === true;
+      const bg = on ? 'var(--green)' : '#444';
+      const col = on ? '#000' : '#aaa';
+      const icon = on ? '🟢' : '⚫';
+      const cmd = 'sym_' + (idx + 1) + (on ? '_off' : '_on');
+      const label = on ? 'ON' : 'OFF';
+      return `<button class="btn" style="background:${bg};color:${col};font-size:6px;padding:4px 8px"
+        onclick="BotBridge.sendCommand('${cmd}')" title="คลิกเพื่อ ${on ? 'ปิด' : 'เปิด'}เทรด ${e.sym}">
+        ${icon} ${e.sym} <b>${label}</b>
+      </button>`;
+    }).join('');
+    return `
+      <div style="margin-top:8px;padding:6px;border:1px solid var(--gold);background:rgba(255,230,0,0.05)">
+        <div style="font-size:6px;color:var(--gold);margin-bottom:4px">🎚 SYMBOL TRADING (กดเปิด/ปิดต่อตัว — มีผลใน 15s)</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">${buttons}</div>
+      </div>
     `;
   },
 
