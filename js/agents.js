@@ -447,7 +447,7 @@ class PatternAgent extends BaseAgent {
   }
   analyze(data) {
     const { candles, cfg } = data;
-    if (candles.length < 4) return { signal:'wait', conf:30, report:{}, log:'Insufficient' };
+    if (candles.length < 25) return { signal:'wait', conf:30, report:{}, log:'Insufficient' };
 
     const last3 = candles.slice(-3);
     const c0 = last3[0], c1 = last3[1], c2 = last3[2];
@@ -459,47 +459,78 @@ class PatternAgent extends BaseAgent {
     const isBull = c => c.close > c.open;
     const isBear = c => c.close < c.open;
 
+    // CONTEXT: are we at recent extreme? (REQUIRED for reversal patterns)
+    const recent = candles.slice(-20, -1);
+    const recentHigh = Math.max(...recent.map(c => c.high));
+    const recentLow  = Math.min(...recent.map(c => c.low));
+    const recentRange = recentHigh - recentLow;
+    const positionInRange = recentRange > 0 ? (c2.close - recentLow) / recentRange : 0.5;
+
+    const atTop    = positionInRange >= 0.75;  // upper 25% of range
+    const atBottom = positionInRange <= 0.25;  // lower 25% of range
+
     let pattern = 'No pattern', score = 0;
+    let contextMsg = '';
 
-    // Bullish Engulfing
-    if (isBear(c1) && isBull(c2) && c2.open <= c1.close && c2.close >= c1.open && body(c2) > body(c1) * 1.2) {
-      pattern = '🟢 Bullish Engulfing'; score = 28;
+    // Bullish Engulfing — only at BOTTOM (otherwise it's just continuation)
+    if (isBear(c1) && isBull(c2) && c2.open <= c1.close && c2.close >= c1.open && body(c2) > body(c1) * 1.5) {
+      if (atBottom) {
+        pattern = '🟢 Bull Engulfing @ Low'; score = 28;
+        contextMsg = ' (ที่ recent low)';
+      } else {
+        pattern = '○ Bull Engulfing (no context)'; score = 8;  // weak signal
+      }
     }
-    // Bearish Engulfing
-    else if (isBull(c1) && isBear(c2) && c2.open >= c1.close && c2.close <= c1.open && body(c2) > body(c1) * 1.2) {
-      pattern = '🔴 Bearish Engulfing'; score = -28;
+    // Bearish Engulfing — only at TOP
+    else if (isBull(c1) && isBear(c2) && c2.open >= c1.close && c2.close <= c1.open && body(c2) > body(c1) * 1.5) {
+      if (atTop) {
+        pattern = '🔴 Bear Engulfing @ High'; score = -28;
+        contextMsg = ' (ที่ recent high)';
+      } else {
+        pattern = '○ Bear Engulfing (no context)'; score = -8;
+      }
     }
-    // Hammer (bullish reversal after downtrend)
-    else if (lower(c2) > body(c2) * 2 && upper(c2) < body(c2) * 0.5 && (isBear(c0) || isBear(c1))) {
-      pattern = '🔨 Hammer'; score = 22;
+    // Hammer — STRICT: lower wick > 3x body, must be at bottom
+    else if (lower(c2) > body(c2) * 3 && upper(c2) < body(c2) * 0.3 && atBottom) {
+      pattern = '🔨 Hammer @ Low'; score = 25;
+      contextMsg = ' (ที่ recent low — reversal candidate)';
     }
-    // Shooting Star (bearish reversal after uptrend)
-    else if (upper(c2) > body(c2) * 2 && lower(c2) < body(c2) * 0.5 && (isBull(c0) || isBull(c1))) {
-      pattern = '⭐ Shooting Star'; score = -22;
+    // Shooting Star — STRICT: upper wick > 3x body, must be at top
+    else if (upper(c2) > body(c2) * 3 && lower(c2) < body(c2) * 0.3 && atTop) {
+      pattern = '⭐ Shooting Star @ High'; score = -25;
+      contextMsg = ' (ที่ recent high — reversal candidate)';
     }
-    // Morning Star (3-candle bullish reversal)
+    // Morning Star — already strong, but require atBottom for high score
     else if (isBear(c0) && body(c1) < body(c0) * 0.4 && isBull(c2) && c2.close > (c0.open + c0.close) / 2) {
-      pattern = '🌅 Morning Star'; score = 30;
+      score = atBottom ? 32 : 15;
+      pattern = atBottom ? '🌅 Morning Star @ Low' : '○ Morning Star (no context)';
     }
-    // Evening Star (3-candle bearish reversal)
+    // Evening Star
     else if (isBull(c0) && body(c1) < body(c0) * 0.4 && isBear(c2) && c2.close < (c0.open + c0.close) / 2) {
-      pattern = '🌇 Evening Star'; score = -30;
+      score = atTop ? -32 : -15;
+      pattern = atTop ? '🌇 Evening Star @ High' : '○ Evening Star (no context)';
     }
-    // Doji (indecision)
+    // Doji at extreme = indecision = wait/watch
     else if (body(c2) < range(c2) * 0.1) {
-      pattern = '✤ Doji'; score = 0;
+      if (atTop || atBottom) {
+        pattern = '✤ Doji @ extreme'; score = 0;  // wait
+      } else {
+        pattern = '✤ Doji'; score = 0;
+      }
     }
 
-    this.signal = score >= 15 ? 'buy' : score <= -15 ? 'sell' : Math.abs(score) < 8 ? 'wait' : 'watch';
+    // ปรับ threshold: ตอนนี้ต้อง score ≥ 20 ถึงจะเป็น actionable signal
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : Math.abs(score) < 10 ? 'wait' : 'watch';
     this.conf   = this._conf(50 + Math.abs(score) * 1.2);
 
     this.report = {
-      pattern,
+      pattern: pattern + contextMsg,
+      position: atTop ? '⬆️ Top of range' : atBottom ? '⬇️ Bottom of range' : '↔️ Mid-range',
       bodyPct:  (body(c2) / Math.max(0.0001, range(c2)) * 100).toFixed(0) + '%',
       upperWick: upper(c2).toFixed(cfg.digits - 1),
       lowerWick: lower(c2).toFixed(cfg.digits - 1),
     };
-    this.lastLog = `Pattern: ${pattern}`;
+    this.lastLog = `Pattern: ${pattern}${contextMsg}`;
     return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
   }
 }
