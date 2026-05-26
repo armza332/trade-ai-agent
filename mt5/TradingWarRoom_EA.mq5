@@ -140,20 +140,19 @@ void CheckSignal(string sym, int idx) {
    // Already in position?
    if (CountPositions(sym) >= MaxOpenPositions) return;
 
-   // Get indicator values (3 bars back for context)
-   double rsiArr[3], bbU[3], bbM[3], bbL[3], atrArr[3];
+   // Get indicator values — use dynamic arrays so ArraySetAsSeries works
+   double rsiArr[], bbU[], bbM[], bbL[], atrArr[];
+   ArraySetAsSeries(rsiArr, true);
+   ArraySetAsSeries(bbU, true);
+   ArraySetAsSeries(bbM, true);
+   ArraySetAsSeries(bbL, true);
+   ArraySetAsSeries(atrArr, true);
 
    if (CopyBuffer(rsiHandle[idx], 0, 0, 3, rsiArr) != 3) return;
    if (CopyBuffer(bbHandle[idx], 1, 0, 3, bbU)    != 3) return;
    if (CopyBuffer(bbHandle[idx], 0, 0, 3, bbM)    != 3) return;
    if (CopyBuffer(bbHandle[idx], 2, 0, 3, bbL)    != 3) return;
    if (CopyBuffer(atrHandle[idx], 0, 0, 3, atrArr) != 3) return;
-
-   ArraySetAsSeries(rsiArr, true);
-   ArraySetAsSeries(bbU, true);
-   ArraySetAsSeries(bbM, true);
-   ArraySetAsSeries(bbL, true);
-   ArraySetAsSeries(atrArr, true);
 
    double rsi    = rsiArr[1];   // last closed bar
    double rsiPrev= rsiArr[2];
