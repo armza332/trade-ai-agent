@@ -20,7 +20,9 @@
 input group "=== SYMBOLS ==="
 input string  Symbol1            = "AUDUSDc";    // Primary symbol
 input string  Symbol2            = "EURUSDc";    // Secondary symbol
-input bool    EnableSymbol2      = true;          // Trade EURUSD too
+input bool    EnableSymbol2      = true;          // Trade Symbol2 too
+input string  Symbol3            = "XAUUSDm";    // Third symbol (gold)
+input bool    EnableSymbol3      = false;         // Trade Symbol3 too (XAU — ระวัง spread!)
 
 input group "=== STRATEGY ==="
 input ENUM_TIMEFRAMES Timeframe  = PERIOD_H1;    // Analysis TF (Swing default; Scalp uses ScalpTF below)
@@ -72,13 +74,28 @@ input bool    AllowRemoteControl = true;          // Allow Close All / Pause fro
 CTrade        trade;
 CPositionInfo posInfo;
 
-datetime      lastSignalTime[2];
+#define MAX_SYMS 3
+
+// Phase 12.8: Per-symbol scan state for dashboard
+struct ScanState {
+   bool   rsiBuy, bbBuy, fibBuy;       // BUY-side conditions
+   bool   rsiSell, bbSell, fibSell;    // SELL-side
+   double rsi;
+   double distToBBLower;               // % distance (positive = above lower band)
+   double distToBBUpper;               // % distance (negative = below upper)
+   datetime lastScan;
+   string tag;                         // human-readable hint
+};
+ScanState     scanState[MAX_SYMS];
+
+datetime      lastSignalTime[MAX_SYMS];
 datetime      lastWebPush = 0;
 datetime      lastCmdPoll = 0;
 int           lastCmdId   = 0;       // last processed command ID
 bool          eaPaused    = false;   // Phase 12.4: remote pause flag
-int           rsiHandle[2], bbHandle[2], atrHandle[2];
-string        symbols[2];
+int           rsiHandle[MAX_SYMS], bbHandle[MAX_SYMS], atrHandle[MAX_SYMS];
+string        symbols[MAX_SYMS];
+int           nActiveSyms = 0;       // dynamically counted in OnInit
 int           tradesToday_W = 0, tradesToday_L = 0;
 double        pnlToday      = 0;
 
@@ -131,12 +148,13 @@ int OnInit() {
    trade.SetDeviationInPoints(30);
    trade.SetTypeFillingBySymbol(Symbol1);
 
-   symbols[0] = Symbol1;
-   symbols[1] = Symbol2;
+   // Phase 12.8: build active symbol list dynamically (1-3 symbols)
+   nActiveSyms = 0;
+   symbols[nActiveSyms++] = Symbol1;
+   if (EnableSymbol2 && StringLen(Symbol2) > 0) symbols[nActiveSyms++] = Symbol2;
+   if (EnableSymbol3 && StringLen(Symbol3) > 0) symbols[nActiveSyms++] = Symbol3;
 
-   int nSyms = EnableSymbol2 ? 2 : 1;
-
-   for (int i = 0; i < nSyms; i++) {
+   for (int i = 0; i < nActiveSyms; i++) {
       // Verify symbol exists
       if (!SymbolSelect(symbols[i], true)) {
          Print("❌ Symbol not available: ", symbols[i]);
@@ -158,7 +176,9 @@ int OnInit() {
    }
 
    PrintFormat("✅ Trading War Room EA initialized [%s MODE]", ScalpMode ? "⚡ SCALP M1" : "🌊 SWING");
-   PrintFormat("   Symbols: %s%s", Symbol1, (EnableSymbol2 ? " + " + Symbol2 : ""));
+   string symStr = symbols[0];
+   for (int i = 1; i < nActiveSyms; i++) symStr += " + " + symbols[i];
+   PrintFormat("   Trading %d symbols: %s", nActiveSyms, symStr);
    PrintFormat("   Timeframe: %s | Risk: %.1f%% | R:R 1:%.1f | Cooldown %dmin",
                EnumToString(effTF), RiskPercent, effRR, effCooldownMin);
    PrintFormat("   Account: $%.2f balance, %.2f equity",
@@ -170,7 +190,7 @@ int OnInit() {
 
 //═══════════════════ ON DEINIT ══════════════════════════════════════
 void OnDeinit(const int reason) {
-   for (int i = 0; i < 2; i++) {
+   for (int i = 0; i < MAX_SYMS; i++) {
       if (rsiHandle[i] != INVALID_HANDLE) IndicatorRelease(rsiHandle[i]);
       if (bbHandle[i]  != INVALID_HANDLE) IndicatorRelease(bbHandle[i]);
       if (atrHandle[i] != INVALID_HANDLE) IndicatorRelease(atrHandle[i]);
@@ -206,19 +226,15 @@ void OnTick() {
    if (OnlyLondonNY && !IsLondonNYSession()) return;
 
    // Trade check per symbol
-   int nSyms = EnableSymbol2 ? 2 : 1;
-   for (int i = 0; i < nSyms; i++) {
+   for (int i = 0; i < nActiveSyms; i++) {
       CheckSignal(symbols[i], i);
    }
 }
 
 //═══════════════════ SIGNAL DETECTION ═══════════════════════════════
 void CheckSignal(string sym, int idx) {
-   // Cooldown
-   if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) return;
-
-   // Already in position?
-   if (CountPositions(sym) >= effMaxPos) return;
+   // Always scan (so dashboard always reflects fresh state).
+   // Cooldown + position checks only block actual trade execution.
 
    // Get indicator values — use dynamic arrays so ArraySetAsSeries works
    double rsiArr[], bbU[], bbM[], bbL[], atrArr[];
@@ -254,31 +270,51 @@ void CheckSignal(string sym, int idx) {
       if (l < fibLow)  fibLow  = l;
    }
    double fibRange = fibHigh - fibLow;
-   double fib618_buy  = fibLow + fibRange * 0.382;  // 0.618 retrace from high
+   double fib618_buy  = fibLow + fibRange * 0.382;
    double fib618_sell = fibHigh - fibRange * 0.382;
-   double fib50_buy   = fibLow + fibRange * 0.5;
-   double fib50_sell  = fibHigh - fibRange * 0.5;
 
-   // ─── BUY SIGNAL: RSI oversold + price at lower BB + near Fib support ───
+   // ─── Evaluate all 6 conditions (used for both trade decision + dashboard) ───
    bool rsiBuy  = (rsi <= effRSIUnder && rsiPrev <= effRSIUnder);
-   bool bbBuy   = (mid <= bbDn * 1.0015);  // within 0.15% of lower BB
-   // Scalp mode: skip Fib filter (M1 swings are too narrow to be meaningful)
+   bool bbBuy   = (mid <= bbDn * 1.0015);
    bool fibBuy  = ScalpMode ? true : (mid <= fib618_buy * 1.005);
 
-   if (rsiBuy && bbBuy && fibBuy) {
-      ExecuteTrade(sym, idx, true, atr, rsi);
-      return;
-   }
-
-   // ─── SELL SIGNAL: RSI overbought + price at upper BB + near Fib resistance ───
    bool rsiSell = (rsi >= effRSIOver && rsiPrev >= effRSIOver);
    bool bbSell  = (mid >= bbUp * 0.9985);
    bool fibSell = ScalpMode ? true : (mid >= fib618_sell * 0.995);
 
-   if (rsiSell && bbSell && fibSell) {
-      ExecuteTrade(sym, idx, false, atr, rsi);
-      return;
+   // ─── Update scan state for dashboard ───
+   scanState[idx].rsiBuy  = rsiBuy;
+   scanState[idx].bbBuy   = bbBuy;
+   scanState[idx].fibBuy  = fibBuy;
+   scanState[idx].rsiSell = rsiSell;
+   scanState[idx].bbSell  = bbSell;
+   scanState[idx].fibSell = fibSell;
+   scanState[idx].rsi     = rsi;
+   scanState[idx].distToBBLower = (bbDn > 0) ? ((mid - bbDn) / bbDn * 100.0) : 0;
+   scanState[idx].distToBBUpper = (bbUp > 0) ? ((bbUp - mid) / bbUp * 100.0) : 0;
+   scanState[idx].lastScan = TimeCurrent();
+
+   int buyHits  = (rsiBuy?1:0)  + (bbBuy?1:0)  + (fibBuy?1:0);
+   int sellHits = (rsiSell?1:0) + (bbSell?1:0) + (fibSell?1:0);
+
+   // Build tag for dashboard
+   if (CountPositions(sym) >= effMaxPos)        scanState[idx].tag = "MAX-POS";
+   else if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) {
+      int waitSec = (int)(effCooldownMin * 60 - (TimeCurrent() - lastSignalTime[idx]));
+      scanState[idx].tag = StringFormat("CD %ds", waitSec);
    }
+   else if (buyHits >= 3)                       scanState[idx].tag = "BUY!";
+   else if (sellHits >= 3)                      scanState[idx].tag = "SELL!";
+   else if (buyHits == 2)                       scanState[idx].tag = "BUY?";
+   else if (sellHits == 2)                      scanState[idx].tag = "SELL?";
+   else                                         scanState[idx].tag = "SCAN";
+
+   // ─── Trade execution (only if cooldown + position allow) ───
+   if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) return;
+   if (CountPositions(sym) >= effMaxPos) return;
+
+   if (rsiBuy && bbBuy && fibBuy)   { ExecuteTrade(sym, idx, true,  atr, rsi); return; }
+   if (rsiSell && bbSell && fibSell){ ExecuteTrade(sym, idx, false, atr, rsi); return; }
 }
 
 //═══════════════════ EXECUTE TRADE ══════════════════════════════════
@@ -487,36 +523,79 @@ void UpdateDashboard() {
             C'18,28,40', C'255,200,0', 1);
    DashLabel("WATCH_LBL", DASH_X+16, y+5, "LIVE WATCH", C'255,230,0', 7);
 
-   int nSyms = EnableSymbol2 ? 2 : 1;
-   string watchList[3] = {WatchXAU, Symbol1, Symbol2};
-   int watchCount = (StringLen(WatchXAU) > 0 ? 1 : 0) + nSyms;
-   if (watchCount > 3) watchCount = 3;
+   // Phase 12.8: show trade symbols first (with scan state), then WatchXAU if not traded
+   string displayList[4];
+   int displayCount = 0;
+   bool watchXauIsTraded = false;
+   for (int i = 0; i < nActiveSyms; i++) {
+      displayList[displayCount++] = symbols[i];
+      if (symbols[i] == WatchXAU) watchXauIsTraded = true;
+   }
+   if (!watchXauIsTraded && StringLen(WatchXAU) > 0) displayList[displayCount++] = WatchXAU;
 
-   for (int i = 0; i < watchCount; i++) {
-      string sym = watchList[i];
+   for (int i = 0; i < displayCount; i++) {
+      string sym = displayList[i];
       if (StringLen(sym) == 0 || !SymbolSelect(sym, true)) continue;
 
       double bid = SymbolInfoDouble(sym, SYMBOL_BID);
       int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
 
-      // try get H1 RSI
-      int hRsi = iRSI(sym, PERIOD_H1, 14, PRICE_CLOSE);
-      double rsiArr[]; ArraySetAsSeries(rsiArr, true);
+      // For traded symbols: use scanState (refreshed every tick)
+      // For watch-only: compute quick RSI
+      bool isTraded = (i < nActiveSyms);
       double rsi = 50;
-      if (hRsi != INVALID_HANDLE) {
-         if (CopyBuffer(hRsi, 0, 0, 1, rsiArr) > 0) rsi = rsiArr[0];
-         IndicatorRelease(hRsi);
-      }
+      string sigTag = "WATCH";
+      color  sigClr = C'120,180,255';   // blue for watch
+      string RBF = "   ";
 
-      color sigClr = C'180,180,180';
-      string sigTag = "WAIT ";
-      if (rsi < effRSIUnder)      { sigClr = C'0,255,100'; sigTag = "BUY  "; }
-      else if (rsi > effRSIOver)  { sigClr = C'255,80,80'; sigTag = "SELL "; }
+      if (isTraded) {
+         rsi = scanState[i].rsi;
+         sigTag = scanState[i].tag;
+
+         // R/B/F indicator: bright if condition met (use BUY side if BUY tag, SELL side if SELL)
+         bool buyDir = (StringFind(sigTag, "BUY") >= 0);
+         bool sellDir = (StringFind(sigTag, "SELL") >= 0);
+         string r = " ", b = " ", f = " ";
+         if (buyDir) {
+            r = scanState[i].rsiBuy ? "R" : "·";
+            b = scanState[i].bbBuy  ? "B" : "·";
+            f = scanState[i].fibBuy ? "F" : "·";
+         } else if (sellDir) {
+            r = scanState[i].rsiSell ? "R" : "·";
+            b = scanState[i].bbSell  ? "B" : "·";
+            f = scanState[i].fibSell ? "F" : "·";
+         } else {
+            // Pure SCAN — show which side has more hits
+            int buyHits  = (scanState[i].rsiBuy?1:0)  + (scanState[i].bbBuy?1:0)  + (scanState[i].fibBuy?1:0);
+            int sellHits = (scanState[i].rsiSell?1:0) + (scanState[i].bbSell?1:0) + (scanState[i].fibSell?1:0);
+            r = (buyHits > sellHits) ? (scanState[i].rsiBuy ? "r" : "·") : (scanState[i].rsiSell ? "r" : "·");
+            b = (buyHits > sellHits) ? (scanState[i].bbBuy  ? "b" : "·") : (scanState[i].bbSell  ? "b" : "·");
+            f = (buyHits > sellHits) ? (scanState[i].fibBuy ? "f" : "·") : (scanState[i].fibSell ? "f" : "·");
+         }
+         RBF = r + b + f;
+
+         // Color by tag
+         if      (sigTag == "BUY!")    sigClr = C'0,255,100';
+         else if (sigTag == "SELL!")   sigClr = C'255,80,80';
+         else if (sigTag == "BUY?")    sigClr = C'150,220,150';
+         else if (sigTag == "SELL?")   sigClr = C'220,150,150';
+         else if (StringFind(sigTag, "CD") == 0) sigClr = C'255,200,0';
+         else if (sigTag == "MAX-POS") sigClr = C'255,140,0';
+         else                          sigClr = C'160,160,160';   // SCAN
+      } else {
+         // watch-only: just show RSI from indicator (no scan info)
+         int hRsi = iRSI(sym, effTF, RSIPeriod, PRICE_CLOSE);
+         double rsiArr[]; ArraySetAsSeries(rsiArr, true);
+         if (hRsi != INVALID_HANDLE) {
+            if (CopyBuffer(hRsi, 0, 0, 1, rsiArr) > 0) rsi = rsiArr[0];
+            IndicatorRelease(hRsi);
+         }
+      }
 
       int posCnt = CountPositions(sym);
       string symShort = StringSubstr(sym, 0, 6);
-      string line = StringFormat("%-7s %s  $%-10s RSI %5.1f  P:%d",
-                                  symShort, sigTag,
+      string line = StringFormat("%-7s %-6s [%s] $%-10s RSI %5.1f P:%d",
+                                  symShort, sigTag, RBF,
                                   DoubleToString(bid, digits),
                                   rsi, posCnt);
       DashLabel("WATCH_" + IntegerToString(i), DASH_X+16, y+22 + i*18, line, sigClr, 8);
