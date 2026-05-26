@@ -10,6 +10,13 @@ const Backtest = {
   running: false,
   lastResult: null,
 
+  /** TF ที่เหมาะกับแต่ละ mode (default mapping) */
+  TF_FOR_MODE: {
+    scalp:    '5min',
+    swing:    '1h',
+    position: '4h',
+  },
+
   /** Run backtest on given symbol */
   async run(symbol = 'XAUUSD', opts = {}) {
     if (this.running) return { error: 'Backtest กำลังทำงานอยู่' };
@@ -17,16 +24,22 @@ const Backtest = {
 
     try {
       const market = TradingWarRoom.market;
-      let candles = market.candles[symbol];
+      const mode = opts.mode || Settings.get('tradeMode', 'swing');
+      // ถ้า user ไม่ระบุ interval → ใช้ default ตาม mode
+      const interval = opts.interval || this.TF_FOR_MODE[mode] || '5min';
 
-      // ถ้ามีน้อย ลองดึงประวัติเพิ่ม
+      // ดึง history ของ TF นี้
       const apiKey = Settings.get('priceApiKey');
-      if ((!candles || candles.length < 200) && apiKey) {
-        const fresh = await market.fetchHistory(symbol, '5min', 500, apiKey);
-        if (fresh && fresh.length > 200) {
-          candles = fresh;
-          market.applyHistory(symbol, fresh);
-        }
+      let candles = null;
+
+      if (apiKey) {
+        // Try fetch fresh (with cache)
+        candles = await market.fetchHistory(symbol, interval, 500, apiKey);
+      }
+
+      // Fallback to simulator candles if no real history
+      if (!candles || candles.length < 100) {
+        candles = market.candles[symbol];
       }
 
       if (!candles || candles.length < 150) {
@@ -34,7 +47,6 @@ const Backtest = {
       }
 
       const cfg = market.symbols[symbol];
-      const mode = opts.mode || Settings.get('tradeMode', 'swing');
       const minConf = opts.minConf || 60;
       const minGradeOrder = ['D','C','B','A','S+'];
       const minGradeIdx = minGradeOrder.indexOf(opts.minGrade || 'B');
@@ -207,7 +219,7 @@ const Backtest = {
       })();
 
       this.lastResult = {
-        symbol, mode, minGrade: opts.minGrade || 'B',
+        symbol, mode, interval, minGrade: opts.minGrade || 'B',
         period: {
           fromTs: candles[startIdx]?.ts,
           toTs:   candles[endIdx]?.ts,
@@ -280,6 +292,11 @@ const Backtest = {
         }).join('');
 
     return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);padding:6px 10px;margin-bottom:8px;font-size:7px">
+        <span class="text-teal">${result.symbol}</span> ·
+        <span class="text-gold">${result.mode}</span> ·
+        <span class="text-purple">TF ${result.interval || '5min'}</span>
+      </div>
       <div class="journal-stats">
         <div class="js-tile" style="border-color:${gradeColor};color:${gradeColor}"><div class="js-num">${grade}</div><div class="js-lbl">Strategy Grade</div></div>
         <div class="js-tile"><div class="js-num">${result.totalTrades}</div><div class="js-lbl">Total Trades</div></div>
@@ -316,12 +333,12 @@ const Backtest = {
   renderUI() {
     const symbol = document.getElementById('bt-symbol')?.value || 'XAUUSD';
     const mode   = document.getElementById('bt-mode')?.value   || Settings.get('tradeMode', 'swing');
-    const minGr  = document.getElementById('bt-mingrade')?.value || 'B';
+    const tf     = document.getElementById('bt-tf')?.value     || 'auto';
     const minCf  = document.getElementById('bt-minconf')?.value || 60;
     return `
       <div style="background:var(--bg-dark);border:1px solid var(--border);padding:10px;margin-bottom:10px">
         <div style="font-size:8px;color:var(--gold);margin-bottom:8px">🔬 BACKTEST CONFIG</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px">
           <div>
             <label class="form-label">Symbol</label>
             <select id="bt-symbol" class="form-input">
@@ -339,12 +356,28 @@ const Backtest = {
             </select>
           </div>
           <div>
+            <label class="form-label">Timeframe</label>
+            <select id="bt-tf" class="form-input">
+              <option value="auto"  ${tf==='auto'?'selected':''}>Auto (ตาม Mode)</option>
+              <option value="1min"  ${tf==='1min'?'selected':''}>1 min</option>
+              <option value="5min"  ${tf==='5min'?'selected':''}>5 min ⚡</option>
+              <option value="15min" ${tf==='15min'?'selected':''}>15 min</option>
+              <option value="30min" ${tf==='30min'?'selected':''}>30 min</option>
+              <option value="1h"    ${tf==='1h'?'selected':''}>1 hour 🌊</option>
+              <option value="4h"    ${tf==='4h'?'selected':''}>4 hour 🏔</option>
+              <option value="1day"  ${tf==='1day'?'selected':''}>Daily</option>
+            </select>
+          </div>
+          <div>
             <label class="form-label">Min Conf</label>
             <input id="bt-minconf" class="form-input" type="number" min="40" max="95" value="${minCf}">
           </div>
           <div style="display:flex;align-items:end;gap:4px">
             <button class="btn btn-primary" onclick="Backtest.runFromUI()" style="flex:1">▶ Run</button>
           </div>
+        </div>
+        <div style="font-size:6px;color:var(--gray);margin-top:6px">
+          💡 <b>TF Auto mapping</b>: ⚡ Scalp → 5min | 🌊 Swing → 1h | 🏔 Position → 4h
         </div>
       </div>
 
@@ -368,9 +401,12 @@ const Backtest = {
   async runFromUI() {
     const symbol = document.getElementById('bt-symbol').value;
     const mode   = document.getElementById('bt-mode').value;
+    const tf     = document.getElementById('bt-tf').value;
     const minConf = parseInt(document.getElementById('bt-minconf').value) || 60;
+    const opts = { mode, minConf };
+    if (tf !== 'auto') opts.interval = tf;
     document.getElementById('bt-result').innerHTML = '<div style="padding:30px;text-align:center;font-size:9px;color:var(--teal)"><div class="pixel-loader"></div> กำลังรัน backtest...</div>';
-    const result = await this.run(symbol, { mode, minConf });
+    const result = await this.run(symbol, opts);
     document.getElementById('bt-result').innerHTML = this.render(result);
   },
 };

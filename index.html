@@ -70,10 +70,11 @@
   </div>
 
   <div class="header-right">
-    <button class="hdr-btn" onclick="Modal.open('backtest')" title="ทดสอบ strategy บนข้อมูลย้อนหลัง">🔬 BACKTEST</button>
-    <button class="hdr-btn" onclick="Modal.open('journal')" title="ประวัติการเทรด">📓 JOURNAL</button>
-    <button class="hdr-btn" onclick="Modal.open('help')" title="วิธีใช้งาน">❓ HELP</button>
-    <button class="hdr-btn" onclick="Modal.open('settings')" title="ตั้งค่า Telegram + Alert">⚙ SETTINGS</button>
+    <button class="hdr-btn" onclick="Modal.open('backtest')" data-i18n="btn.backtest" data-i18n-title="bt.title">🔬 BACKTEST</button>
+    <button class="hdr-btn" onclick="Modal.open('journal')" data-i18n="btn.journal">📓 JOURNAL</button>
+    <button class="hdr-btn" onclick="Modal.open('help')" data-i18n="btn.help">❓ HELP</button>
+    <button class="hdr-btn" onclick="Modal.open('settings')" data-i18n="btn.settings">⚙ SETTINGS</button>
+    <button class="hdr-btn" id="lang-toggle" onclick="I18n.toggle()" title="Toggle TH/EN">🇹🇭 TH</button>
     <div class="live-indicator">
       <div class="live-dot"></div>
       <span id="live-status">INIT</span>
@@ -403,6 +404,7 @@
 </div>
 
 <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
+<script src="js/i18n.js"></script>
 <script src="js/market.js"></script>
 <script src="js/agents.js"></script>
 <script src="js/ui.js"></script>

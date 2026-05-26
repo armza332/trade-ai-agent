@@ -323,5 +323,6 @@ const TradingWarRoom = {
 
 // Boot when DOM ready
 document.addEventListener('DOMContentLoaded', () => {
+  if (typeof I18n !== 'undefined') I18n.init();
   TradingWarRoom.init();
 });
