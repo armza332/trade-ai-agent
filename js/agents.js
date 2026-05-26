@@ -725,6 +725,144 @@ class MTFAgent extends BaseAgent {
 /* ═══════════════════════════════════════════════════════
    NEWS ANALYST — Economic Calendar Simulation
    ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   ICHIMOKU KINKO HYO — All-in-one trend system (Phase 14)
+   Note: skips Scalp/M1 mode — designed for H1+
+   ═══════════════════════════════════════════════════════ */
+class IchimokuAgent extends BaseAgent {
+  constructor(team) {
+    super('Ichimoku', 'Cloud + Tenkan/Kijun trend system', '🌥', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 78) {
+      return { signal:'wait', conf:30, report:{ note:'ต้องการ 78+ แท่ง' }, log:'Insufficient data' };
+    }
+
+    // ── Skip if Scalp M1 mode (Ichimoku slow indicator, M1 = noise) ──
+    if (typeof Settings !== 'undefined' && Settings.get('tradeMode', 'swing') === 'scalp') {
+      return { signal:'wait', conf:40, report:{ note:'⏸ ไม่ใช้ใน Scalp Mode (slow indicator)' }, log:'Skipped — Scalp mode' };
+    }
+
+    const highs  = candles.map(c => c.high);
+    const lows   = candles.map(c => c.low);
+    const closes = candles.map(c => c.close);
+
+    // Tenkan-sen = (9-period H+L)/2
+    const periodHL = (arr, hi, lo, n) => {
+      const slice = arr.slice(-n);
+      return slice.length === n ? (Math.max(...slice.map((_, i) => hi[hi.length - n + i])) +
+                                   Math.min(...slice.map((_, i) => lo[lo.length - n + i]))) / 2 : null;
+    };
+    const tenkan = periodHL(closes, highs, lows, 9);
+    const kijun  = periodHL(closes, highs, lows, 26);
+    const senkouA = (tenkan && kijun) ? (tenkan + kijun) / 2 : null;
+    const senkouB = periodHL(closes, highs, lows, 52);
+
+    // Chikou span = current close shifted -26 (i.e. compare current close vs price 26 ago)
+    const chikouRef = closes.at(-1);
+    const priceAgo  = closes.length > 26 ? closes[closes.length - 27] : closes[0];
+    const chikouBull = chikouRef > priceAgo;
+
+    const last = closes.at(-1);
+    if (!tenkan || !kijun || !senkouA || !senkouB) {
+      return { signal:'wait', conf:35, report:{}, log:'Ichimoku calc failed' };
+    }
+
+    const cloudTop = Math.max(senkouA, senkouB);
+    const cloudBot = Math.min(senkouA, senkouB);
+
+    // Score components
+    let score = 0;
+    let strength = [];
+
+    // 1) Price vs cloud
+    if (last > cloudTop)        { score += 25; strength.push('Above cloud'); }
+    else if (last < cloudBot)   { score -= 25; strength.push('Below cloud'); }
+    else                        { strength.push('In cloud (range)'); }
+
+    // 2) Tenkan vs Kijun
+    if (tenkan > kijun)         { score += 15; strength.push('T>K bull'); }
+    else if (tenkan < kijun)    { score -= 15; strength.push('T<K bear'); }
+
+    // 3) Cloud bias (Senkou A vs B)
+    if (senkouA > senkouB)      { score += 10; strength.push('Future cloud green'); }
+    else if (senkouA < senkouB) { score -= 10; strength.push('Future cloud red'); }
+
+    // 4) Chikou confirmation
+    if (chikouBull && score > 0)  score += 10;
+    if (!chikouBull && score < 0) score -= 10;
+
+    this.signal = score >= 25 ? 'buy' : score <= -25 ? 'sell' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 0.8);
+
+    const d = cfg.digits - 1;
+    this.report = {
+      tenkan:    tenkan.toFixed(d),
+      kijun:     kijun.toFixed(d),
+      cloudTop:  cloudTop.toFixed(d),
+      cloudBot:  cloudBot.toFixed(d),
+      position:  last > cloudTop ? '☁ Above' : last < cloudBot ? '☁ Below' : '☁ Inside',
+      chikou:    chikouBull ? '▲ Bull' : '▼ Bear',
+      strength:  strength.join(' | '),
+    };
+    this.lastLog = `Ichimoku ${this.signal.toUpperCase()} | ${strength.join(', ')} | score ${score}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   DXY (US Dollar Index) — confirm/veto USD pair signals
+   Uses proxy: cached DXY price; updates from market.dxy if available
+   Pure logic agent — no fetch (market.js handles fetch)
+   ═══════════════════════════════════════════════════════ */
+class DXYAgent extends BaseAgent {
+  constructor(team) {
+    super('DXY', 'USD Strength filter', '💵', team);
+  }
+  analyze(data) {
+    const { cfg } = data;
+    // DXY trend kept in market or computed from EURUSD inverse as fallback
+    const dxyTrend = typeof TradingWarRoom !== 'undefined' ? TradingWarRoom.market?.dxyTrend : null;
+    const dxyPrice = typeof TradingWarRoom !== 'undefined' ? TradingWarRoom.market?.dxyPrice : null;
+
+    // Fallback: invert EURUSD trend (EURUSD = 57.6% of DXY, strongest correlate)
+    if (dxyTrend == null) {
+      const eurCandles = typeof TradingWarRoom !== 'undefined' ? TradingWarRoom.market?.candles?.EURUSD : null;
+      if (eurCandles && eurCandles.length >= 20) {
+        const closes = eurCandles.map(c => c.close);
+        const sma20 = closes.slice(-20).reduce((a,b)=>a+b,0)/20;
+        const eurTrend = closes.at(-1) > sma20 ? +1 : -1;
+        // EUR up → USD down → DXY down → invert
+        const inferredDxyTrend = -eurTrend;
+        return this._buildSignal(inferredDxyTrend, true, cfg);
+      }
+      return { signal:'wait', conf:40, report:{ note:'No DXY data yet' }, log:'No data' };
+    }
+
+    return this._buildSignal(dxyTrend, false, cfg);
+  }
+
+  _buildSignal(dxyTrend, inferred, cfg) {
+    // dxyTrend > 0 = USD strong = USD pair (EURUSD/AUDUSD/XAUUSD) bearish
+    // dxyTrend < 0 = USD weak = USD pair bullish
+    let score = -dxyTrend * 20;   // invert
+    if (Math.abs(dxyTrend) >= 2) score *= 1.3;   // strong trend amplify
+
+    this.signal = score >= 15 ? 'buy' : score <= -15 ? 'sell' : 'watch';
+    this.conf   = this._conf(50 + Math.abs(score) * 1.2 - (inferred ? 10 : 0));
+
+    this.report = {
+      dxyTrend:  dxyTrend > 0 ? `▲ +${dxyTrend.toFixed(2)} (USD strong)` :
+                 dxyTrend < 0 ? `▼ ${dxyTrend.toFixed(2)} (USD weak)`    : '↔ flat',
+      source:    inferred ? '(inferred from EURUSD)' : 'live DXY feed',
+      pairBias:  dxyTrend > 0 ? '🔴 Bearish for USD pairs' : '🟢 Bullish for USD pairs',
+    };
+    this.lastLog = `DXY ${dxyTrend > 0 ? 'UP' : 'DOWN'} → ${this.signal.toUpperCase()} ${inferred ? '(inferred)' : ''}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
 class NewsAgent extends BaseAgent {
   constructor(team, pairs) {
     super('News-Intel', 'Economic Events & Sentiment', '📰', team);
@@ -919,6 +1057,8 @@ class GoldTeam {
     this.pattern    = new PatternAgent('GOLD');
     this.divergence = new DivergenceAgent('GOLD');
     this.mtf        = new MTFAgent('GOLD', 'XAUUSD');
+    this.ichimoku   = new IchimokuAgent('GOLD');   // Phase 14
+    this.dxy        = new DXYAgent('GOLD');         // Phase 14
     this.news       = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
@@ -953,6 +1093,8 @@ class GoldTeam {
     if (this._on('enablePattern',   true)) { agents.pattern    = wt(this.pattern.analyze(data),    'Gold-Pattern');    reports.push(agents.pattern); }
     if (this._on('enableDivergence',true)) { agents.divergence = wt(this.divergence.analyze(data), 'Gold-Divergence'); reports.push(agents.divergence); }
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(this.mtf.analyze(data, market), 'Gold-MTF'); reports.push(agents.mtf); }
+    if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(this.ichimoku.analyze(data),  'Gold-Ichimoku');  reports.push(agents.ichimoku); }
+    if (this._on('enableDXY',       true)) { agents.dxy       = wt(this.dxy.analyze(data),       'Gold-DXY');       reports.push(agents.dxy); }
     if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
     const agg = this.head.aggregate(reports);
@@ -990,6 +1132,8 @@ class CurrencyTeam {
       pattern:    new PatternAgent('AUDUSD'),
       divergence: new DivergenceAgent('AUDUSD'),
       mtf:        new MTFAgent('AUDUSD', 'AUDUSD'),
+      ichimoku:   new IchimokuAgent('AUDUSD'),   // Phase 14
+      dxy:        new DXYAgent('AUDUSD'),         // Phase 14
     };
 
     // EURUSD sub-analysts
@@ -1005,6 +1149,8 @@ class CurrencyTeam {
       pattern:    new PatternAgent('EURUSD'),
       divergence: new DivergenceAgent('EURUSD'),
       mtf:        new MTFAgent('EURUSD', 'EURUSD'),
+      ichimoku:   new IchimokuAgent('EURUSD'),   // Phase 14
+      dxy:        new DXYAgent('EURUSD'),         // Phase 14
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -1049,6 +1195,8 @@ class CurrencyTeam {
     if (this._on('enablePattern',   true)) { agents.pattern    = wt(pair.pattern.analyze(data),    'Pattern');    reports.push(agents.pattern); }
     if (this._on('enableDivergence',true)) { agents.divergence = wt(pair.divergence.analyze(data), 'Divergence'); reports.push(agents.divergence); }
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(pair.mtf.analyze(data, market), 'MTF'); reports.push(agents.mtf); }
+    if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(pair.ichimoku.analyze(data),  'Ichimoku');  reports.push(agents.ichimoku); }
+    if (this._on('enableDXY',       true)) { agents.dxy       = wt(pair.dxy.analyze(data),       'DXY');       reports.push(agents.dxy); }
     return { agents, agg: pair.head.aggregate(reports) };
   }
 

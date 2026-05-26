@@ -533,7 +533,7 @@ const Modal = {
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
     const ka = document.getElementById('s-keepalive'); if (ka) ka.checked = Settings.get('keepAlive', true);
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
@@ -573,7 +573,7 @@ const Modal = {
       }
     }
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) Settings.set('enable' + name, el.checked);
     });
@@ -1037,7 +1037,7 @@ const AgentScores = {
       return;
     }
 
-    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'];
+    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'];
 
     // 1. Profitable symbols = enable all with totalR > 0 AND winnerCount >= 2
     const profitableSyms = rec.filter(s => s.totalR > 30 && s.winnerCount >= 2);

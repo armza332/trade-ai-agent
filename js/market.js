@@ -115,6 +115,8 @@ class MarketEngine {
 
     this.candles  = {};
     this.prices   = {};
+    this.dxyPrice = null;    // Phase 14: DXY (US Dollar Index) — fetched or inferred
+    this.dxyTrend = null;    // +N = strong USD, -N = weak USD
 
     for (const sym in this.symbols) {
       this.candles[sym] = this._genHistory(sym, 200);
