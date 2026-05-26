@@ -1627,6 +1627,76 @@ const BotBridge = {
         this.render();
       }
     } catch (e) { /* silent */ }
+    // Phase 12.6: also poll live trades for AI training
+    this.syncLiveTrades(url);
+  },
+
+  // Phase 12.6: pull recently closed trades → feed into KB
+  liveSeenTrades: null,
+  liveStats: { count: 0, wins: 0, losses: 0, totalR: 0 },
+
+  async syncLiveTrades(url) {
+    // dedupe via posId in localStorage
+    if (!this.liveSeenTrades) {
+      try { this.liveSeenTrades = new Set(JSON.parse(localStorage.getItem('TWR_LIVE_SEEN') || '[]')); }
+      catch { this.liveSeenTrades = new Set(); }
+    }
+    try {
+      const r = await fetch(url + '?action=trades&t=' + Date.now());
+      const data = await r.json();
+      if (!data.ok || !Array.isArray(data.trades)) return;
+      let newCount = 0;
+      data.trades.forEach(t => {
+        if (!t || !t.posId) return;
+        if (this.liveSeenTrades.has(t.posId)) return;
+        this.liveSeenTrades.add(t.posId);
+        this.learnFromTrade(t);
+        newCount++;
+      });
+      if (newCount > 0) {
+        // Persist seen set (truncate to last 500 ids)
+        const arr = Array.from(this.liveSeenTrades);
+        if (arr.length > 500) this.liveSeenTrades = new Set(arr.slice(-500));
+        localStorage.setItem('TWR_LIVE_SEEN', JSON.stringify(Array.from(this.liveSeenTrades)));
+        console.log(`📚 AI learned from ${newCount} new live trade(s) | total seen: ${this.liveSeenTrades.size}`);
+      }
+      // Compute aggregate stats from full set
+      this.liveStats = data.trades.reduce((acc, t) => {
+        acc.count++;
+        if (t.outcome === 'win') acc.wins++;
+        else if (t.outcome === 'loss') acc.losses++;
+        acc.totalR += (parseFloat(t.rMult) || 0);
+        return acc;
+      }, { count: 0, wins: 0, losses: 0, totalR: 0 });
+    } catch (e) { /* silent */ }
+  },
+
+  // Inject trade into web KnowledgeBase as "live" with synthetic EA-strategy votes
+  learnFromTrade(t) {
+    if (typeof AgentScores === 'undefined') return;
+    if (!t.outcome || t.outcome === 'breakeven') return;
+    // EA used RSI + BB + Fib confluence — all agreed on direction
+    const sigDir = (t.side === 'buy') ? 'buy' : 'sell';
+    const votes = [
+      { agent: 'ea-rsi',       signal: sigDir },
+      { agent: 'ea-bollinger', signal: sigDir },
+      { agent: 'ea-fib',       signal: sigDir },
+    ];
+    // Classify regime crudely from BB position at entry
+    let regime = 'range';
+    const bbPos = parseFloat(t.bbPosAtEntry);
+    if (bbPos < 0.2 || bbPos > 0.8) regime = 'trend';
+    // Symbol short form (strip suffix m/c/z/r)
+    const symKey = (t.sym || '').replace(/[mczr]$/i, '').toUpperCase();
+    AgentScores.recordTrade({
+      votes,
+      signal:  sigDir,
+      outcome: t.outcome,
+      r:       parseFloat(t.rMult) || (t.outcome === 'win' ? 1 : -1),
+      regime,
+      symbol:  symKey,
+      source:  'live',
+    });
   },
 
   // Phase 12.4: send remote command to EA via Apps Script
@@ -1728,6 +1798,32 @@ const BotBridge = {
       </div>
       <div style="margin-top:4px;font-size:6px;color:var(--gray)">
         Symbols: ${(s.symbols || []).join(', ')} · Updated ${s.ageSec}s ago
+      </div>
+
+      <!-- Phase 12.6: Live AI Training Status -->
+      ${this.renderLiveTraining()}
+    `;
+  },
+
+  renderLiveTraining() {
+    const st = this.liveStats || { count: 0, wins: 0, losses: 0, totalR: 0 };
+    const wr  = st.count > 0 ? ((st.wins / (st.wins + st.losses)) * 100) : 0;
+    const avgR = st.count > 0 ? (st.totalR / st.count) : 0;
+    const seen = this.liveSeenTrades ? this.liveSeenTrades.size : 0;
+    const wrCls   = wr >= 55 ? 'text-green' : wr >= 45 ? 'text-yellow' : 'text-red';
+    const rCls    = avgR > 0 ? 'text-green' : avgR < 0 ? 'text-red' : 'text-gray';
+    return `
+      <div style="margin-top:10px;padding:8px;border:1px solid var(--purple);background:rgba(120,80,255,0.08)">
+        <div style="font-size:7px;color:var(--purple);margin-bottom:6px">🧠 AI LIVE TRAINING <span style="color:var(--gray);font-size:6px">(KB learns from every closed trade)</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:6px">
+          <div><span style="color:var(--gray)">Total Trades</span><br><span style="color:var(--teal);font-size:9px">${st.count}</span></div>
+          <div><span style="color:var(--gray)">Win Rate</span><br><span class="${wrCls}" style="font-size:9px">${wr.toFixed(1)}%</span></div>
+          <div><span style="color:var(--gray)">Avg R</span><br><span class="${rCls}" style="font-size:9px">${avgR > 0 ? '+' : ''}${avgR.toFixed(2)}R</span></div>
+          <div><span style="color:var(--gray)">KB Updates</span><br><span style="color:var(--gold);font-size:9px">${seen}</span></div>
+        </div>
+        <div style="margin-top:4px;font-size:6px;color:var(--gray)">
+          📈 W:${st.wins} L:${st.losses} · ผลรวม R: ${st.totalR > 0 ? '+' : ''}${st.totalR.toFixed(2)} · ดู KB stats ที่ <span style="color:var(--teal);cursor:pointer" onclick="Modal.open('journal')">📓 JOURNAL</span>
+        </div>
       </div>
     `;
   },

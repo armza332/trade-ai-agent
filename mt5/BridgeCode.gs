@@ -32,6 +32,31 @@ function doPost(e) {
 
     const props = PropertiesService.getScriptProperties();
 
+    // ── Phase 12.6: EA → Web trade record (for AI training) ──
+    if (data.type === 'trade') {
+      let trades;
+      try { trades = JSON.parse(props.getProperty('LIVE_TRADES') || '[]'); }
+      catch (e) { trades = []; }
+      trades.unshift({
+        sym:       data.sym,
+        side:      data.side,
+        entry:     data.entry,
+        exit:      data.exit,
+        profit:    data.profit,
+        rMult:     data.rMult,
+        outcome:   data.outcome,
+        rsiAtEntry:    data.rsiAtEntry,
+        bbPosAtEntry:  data.bbPosAtEntry,
+        sessionAtEntry: data.sessionAtEntry,
+        openTime:  data.openTime,
+        closeTime: data.closeTime,
+        posId:     data.posId,
+      });
+      if (trades.length > 500) trades.length = 500;   // keep last 500
+      props.setProperty('LIVE_TRADES', JSON.stringify(trades));
+      return json({ ok: true, msg: 'trade recorded', count: trades.length });
+    }
+
     // ── Phase 12.4: Web → EA command enqueue ──
     if (data.type === 'cmd') {
       const allowed = ['close_all', 'pause', 'resume', 'reset_pnl'];
@@ -127,12 +152,21 @@ function doGet(e) {
     return json({ ok: true, history: h });
   }
 
+  // Phase 12.6: live trades for AI training
+  if (action === 'trades') {
+    const trades = JSON.parse(props.getProperty('LIVE_TRADES') || '[]');
+    const since = parseInt(e.parameter.since || '0', 10);
+    const filtered = since > 0 ? trades.filter(t => t.closeTime > since) : trades;
+    return json({ ok: true, trades: filtered, total: trades.length });
+  }
+
   if (action === 'clear') {
     props.deleteProperty('LATEST_STATUS');
     props.deleteProperty('LATEST_PRICES');
     props.deleteProperty('LAST_CMD');
     props.deleteProperty('LAST_CMD_ID');
     props.deleteProperty('HISTORY');
+    props.deleteProperty('LIVE_TRADES');
     return json({ ok: true, msg: 'Cleared' });
   }
 

@@ -72,6 +72,22 @@ string        symbols[2];
 int           tradesToday_W = 0, tradesToday_L = 0;
 double        pnlToday      = 0;
 
+// Phase 12.6: Live training — entry context per open ticket
+struct TradeCtx {
+   ulong  ticket;
+   string sym;
+   string side;
+   double entry;
+   double sl;
+   double rsiAtEntry;
+   double bbPosAtEntry;   // 0..1 (where 0=lower band, 1=upper band)
+   string sessionAtEntry;
+   datetime openTime;
+   double riskUSD;
+};
+TradeCtx openCtx[];        // dynamic array
+int      openCtxCount = 0;
+
 //═══════════════════ ON INIT ════════════════════════════════════════
 int OnInit() {
    trade.SetExpertMagicNumber(MagicNumber);
@@ -711,4 +727,140 @@ int CloseAllMyPositions() {
       if (trade.PositionClose(posInfo.Ticket())) closed++;
    }
    return closed;
+}
+
+//═══════════════════ PHASE 12.6: Live Training Loop ═══════════════════
+// Capture trade context on entry + send result on close → Web KB learns
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                       const MqlTradeRequest& request,
+                       const MqlTradeResult& result) {
+   if (trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+   if (!HistoryDealSelect(trans.deal)) return;
+   if (HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != MagicNumber) return;
+
+   long entryType = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+
+   if (entryType == DEAL_ENTRY_IN) {
+      // Position OPENING — snapshot context
+      CaptureOpenContext(trans.deal);
+   }
+   else if (entryType == DEAL_ENTRY_OUT) {
+      // Position CLOSING — send trade record to web for AI training
+      SendTradeRecord(trans.deal);
+   }
+}
+
+void CaptureOpenContext(ulong dealTicket) {
+   string sym = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+   long type  = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+   double entry = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+   ulong posId  = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+
+   // Compute indicator context
+   double rsi = 50, bbPos = 0.5;
+   double bbU[], bbL[];
+   ArraySetAsSeries(bbU, true); ArraySetAsSeries(bbL, true);
+
+   int hRsi = iRSI(sym, Timeframe, RSIPeriod, PRICE_CLOSE);
+   int hBb  = iBands(sym, Timeframe, BBPeriod, 0, BBDeviation, PRICE_CLOSE);
+   if (hRsi != INVALID_HANDLE) {
+      double a[]; ArraySetAsSeries(a, true);
+      if (CopyBuffer(hRsi, 0, 0, 1, a) > 0) rsi = a[0];
+      IndicatorRelease(hRsi);
+   }
+   if (hBb != INVALID_HANDLE) {
+      if (CopyBuffer(hBb, 1, 0, 1, bbU) > 0 && CopyBuffer(hBb, 2, 0, 1, bbL) > 0) {
+         double range = bbU[0] - bbL[0];
+         if (range > 0) bbPos = (entry - bbL[0]) / range;
+      }
+      IndicatorRelease(hBb);
+   }
+
+   double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskUSD = bal * RiskPercent / 100.0;
+
+   // Get SL from position (just opened)
+   double sl = 0;
+   if (PositionSelectByTicket(posId)) sl = PositionGetDouble(POSITION_SL);
+
+   // Append to openCtx
+   ArrayResize(openCtx, openCtxCount + 1);
+   openCtx[openCtxCount].ticket   = posId;
+   openCtx[openCtxCount].sym      = sym;
+   openCtx[openCtxCount].side     = (type == DEAL_TYPE_BUY) ? "buy" : "sell";
+   openCtx[openCtxCount].entry    = entry;
+   openCtx[openCtxCount].sl       = sl;
+   openCtx[openCtxCount].rsiAtEntry = rsi;
+   openCtx[openCtxCount].bbPosAtEntry = bbPos;
+   openCtx[openCtxCount].sessionAtEntry = IsLondonNYSession() ? (TimeHour(TimeCurrent()) < 13 ? "london" : "ny") : "asia";
+   openCtx[openCtxCount].openTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+   openCtx[openCtxCount].riskUSD  = riskUSD;
+   openCtxCount++;
+}
+
+void SendTradeRecord(ulong dealTicket) {
+   string sym = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+   double exit = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+   double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                  + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                  + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+   datetime closeTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+   ulong posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+
+   // Find context — match by position ID
+   int ctxIdx = -1;
+   for (int i = 0; i < openCtxCount; i++) {
+      if (openCtx[i].ticket == posId) { ctxIdx = i; break; }
+   }
+
+   string side = "?";
+   double entry = 0, rsiAtEntry = 50, bbPosAtEntry = 0.5;
+   string sessionAtEntry = "?";
+   datetime openTime = 0;
+   double riskUSD = 0;
+   if (ctxIdx >= 0) {
+      side           = openCtx[ctxIdx].side;
+      entry          = openCtx[ctxIdx].entry;
+      rsiAtEntry     = openCtx[ctxIdx].rsiAtEntry;
+      bbPosAtEntry   = openCtx[ctxIdx].bbPosAtEntry;
+      sessionAtEntry = openCtx[ctxIdx].sessionAtEntry;
+      openTime       = openCtx[ctxIdx].openTime;
+      riskUSD        = openCtx[ctxIdx].riskUSD;
+   }
+
+   // R-multiple = profit / risk_USD
+   double rMult = (riskUSD > 0) ? (profit / riskUSD) : (profit > 0 ? 1.0 : -1.0);
+   string outcome = profit > 0 ? "win" : (profit < 0 ? "loss" : "breakeven");
+
+   string json = StringFormat(
+      "{\"type\":\"trade\",\"secret\":\"%s\","
+      "\"sym\":\"%s\",\"side\":\"%s\","
+      "\"entry\":%.5f,\"exit\":%.5f,\"profit\":%.2f,\"rMult\":%.3f,"
+      "\"outcome\":\"%s\","
+      "\"rsiAtEntry\":%.2f,\"bbPosAtEntry\":%.3f,\"sessionAtEntry\":\"%s\","
+      "\"openTime\":%d,\"closeTime\":%d,\"posId\":%I64u}",
+      WebhookSecret, sym, side, entry, exit, profit, rMult, outcome,
+      rsiAtEntry, bbPosAtEntry, sessionAtEntry,
+      (int)openTime, (int)closeTime, posId
+   );
+
+   PostToBridge(json);
+
+   // Remove from openCtx
+   if (ctxIdx >= 0) {
+      for (int i = ctxIdx; i < openCtxCount - 1; i++) openCtx[i] = openCtx[i+1];
+      openCtxCount--;
+      ArrayResize(openCtx, openCtxCount);
+   }
+
+   Print(StringFormat("📚 LIVE TRADE recorded: %s %s entry %.5f → exit %.5f | %s %.2fR ($%.2f)",
+         sym, side, entry, exit, outcome, rMult, profit));
+}
+
+void PostToBridge(string json) {
+   if (StringLen(WebhookURL) < 10) return;
+   char post[]; StringToCharArray(json, post, 0, StringLen(json));
+   char result[]; string headers;
+   ResetLastError();
+   WebRequest("POST", WebhookURL, "Content-Type: application/json\r\n", 5000, post, result, headers);
 }
