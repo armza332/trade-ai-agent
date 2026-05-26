@@ -113,38 +113,38 @@ const UI = {
     const d  = cfg.digits - 1;
     const atr = cfg.atr;
 
-    // SMC card
-    const smcMetrics = [
-      { l: 'Structure', v: agents.smc.report.structure, c: agents.smc.report.structure === 'BULLISH' ? 'up' : 'dn' },
-      { l: 'BOS',       v: agents.smc.report.bos },
-      { l: 'Order Block', v: agents.smc.report.ob, c: 'info' },
-      { l: 'ATR',       v: agents.smc.report.atr },
-    ];
-    const smcExtra = this.fvgTag(agents.smc.report);
+    // SMC card (optional — may be disabled)
+    const smcMetrics = agents.smc ? [
+      { l: 'Structure', v: agents.smc.report?.structure ?? '--', c: agents.smc.report?.structure === 'BULLISH' ? 'up' : 'dn' },
+      { l: 'BOS',       v: agents.smc.report?.bos ?? '--' },
+      { l: 'Order Block', v: agents.smc.report?.ob ?? '--', c: 'info' },
+      { l: 'ATR',       v: agents.smc.report?.atr ?? '--' },
+    ] : null;
+    const smcExtra = agents.smc ? this.fvgTag(agents.smc.report) : '';
 
-    // Elliott card
-    const ewMetrics = [
-      { l: 'Wave',  v: agents.elliott.report.wave ?? '?', c: 'info' },
-      { l: 'Stage', v: agents.elliott.report.stage ?? '?' },
-      { l: 'Bias',  v: agents.elliott.report.bias ?? '?', c: (agents.elliott.report.bias === 'Bullish' ? 'up' : 'dn') },
-      { l: 'RSI',   v: agents.elliott.report.rsi ?? '?' },
-    ];
+    // Elliott card (optional)
+    const ewMetrics = agents.elliott ? [
+      { l: 'Wave',  v: agents.elliott.report?.wave ?? '?', c: 'info' },
+      { l: 'Stage', v: agents.elliott.report?.stage ?? '?' },
+      { l: 'Bias',  v: agents.elliott.report?.bias ?? '?', c: agents.elliott.report?.bias === 'Bullish' ? 'up' : 'dn' },
+      { l: 'RSI',   v: agents.elliott.report?.rsi ?? '?' },
+    ] : null;
 
-    // Fib card
-    const fibMetrics = [
-      { l: 'Nearest Level', v: agents.fib.report.nearest ?? '--' },
-      { l: 'Level Price',   v: agents.fib.report.level   ?? '--', c: 'info' },
-      { l: 'Golden Zone',   v: agents.fib.report.golden  ?? '--', c: agents.fib.report.golden?.includes('✅') ? 'up' : '' },
-      { l: 'R:R',           v: agents.fib.report.rr      ?? '--', c: 'warn' },
-    ];
+    // Fib card (optional)
+    const fibMetrics = agents.fib ? [
+      { l: 'Nearest Level', v: agents.fib.report?.nearest ?? '--' },
+      { l: 'Level Price',   v: agents.fib.report?.level   ?? '--', c: 'info' },
+      { l: 'Golden Zone',   v: agents.fib.report?.golden  ?? '--', c: agents.fib.report?.golden?.includes('✅') ? 'up' : '' },
+      { l: 'R:R',           v: agents.fib.report?.rr      ?? '--', c: 'warn' },
+    ] : null;
 
-    // RSI card
-    const rsiMetrics = [
-      { l: 'RSI 14', v: agents.rsi.report.rsi14 ?? '--' },
-      { l: 'ADX',    v: agents.rsi.report.adx   ?? '--', c: agents.rsi.report.adx?.includes('Strong') ? 'up' : '' },
-      { l: 'Divergence', v: agents.rsi.report.div ?? '--', c: agents.rsi.report.div?.includes('⚠️') ? 'warn' : '' },
-      { l: 'Value Zone', v: agents.rsi.report.pos ?? '--', c: 'info' },
-    ];
+    // RSI card (optional)
+    const rsiMetrics = agents.rsi ? [
+      { l: 'RSI 14', v: agents.rsi.report?.rsi14 ?? '--' },
+      { l: 'ADX',    v: agents.rsi.report?.adx   ?? '--', c: agents.rsi.report?.adx?.includes('Strong') ? 'up' : '' },
+      { l: 'Divergence', v: agents.rsi.report?.div ?? '--', c: agents.rsi.report?.div?.includes('⚠️') ? 'warn' : '' },
+      { l: 'Value Zone', v: agents.rsi.report?.pos ?? '--', c: 'info' },
+    ] : null;
 
     // Optional cards (only show if agent was active)
     let extraCards = '';
@@ -220,35 +220,53 @@ const UI = {
     const { aud, eur, news, head } = report;
 
     const buildAgentGrid = (teamData, sym) => {
+      if (!teamData) return '';
       const { agents, cfg } = teamData;
       const d = cfg.digits - 1;
 
-      const smcM = [
-        { l: 'Structure', v: agents.smc.report.structure ?? '--', c: agents.smc.report.structure === 'BULLISH' ? 'up' : 'dn' },
-        { l: 'BOS',       v: agents.smc.report.bos ?? '--' },
-        { l: 'OB',        v: agents.smc.report.ob  ?? '--', c: 'info' },
-        { l: 'FVG',       v: agents.smc.report.fvgCount ?? '--' },
-      ];
-      const ewM = [
-        { l: 'Wave',  v: agents.elliott.report.wave  ?? '?' },
-        { l: 'Stage', v: agents.elliott.report.stage ?? '?' },
-        { l: 'Bias',  v: agents.elliott.report.bias  ?? '?', c: agents.elliott.report.bias === 'Bullish' ? 'up' : 'dn' },
-        { l: 'Action', v: agents.elliott.report.action ?? '--' },
-      ];
-      const fibM = [
-        { l: 'Level',   v: agents.fib.report.nearest ?? '--', c: 'info' },
-        { l: 'TP1',     v: agents.fib.report.tp1 ?? '--', c: 'up' },
-        { l: 'SL',      v: agents.fib.report.sl  ?? '--', c: 'dn' },
-        { l: 'R:R',     v: agents.fib.report.rr  ?? '--', c: 'warn' },
-      ];
-      const rsiM = [
-        { l: 'RSI 14',  v: agents.rsi.report.rsi14 ?? '--' },
-        { l: 'ADX',     v: agents.rsi.report.adx   ?? '--' },
-        { l: 'Div',     v: agents.rsi.report.div   ?? '--', c: agents.rsi.report.div?.includes('⚠️') ? 'warn' : '' },
-        { l: 'VP Zone', v: agents.rsi.report.pos   ?? '--', c: 'info' },
-      ];
+      const smcM = agents.smc ? [
+        { l: 'Structure', v: agents.smc.report?.structure ?? '--', c: agents.smc.report?.structure === 'BULLISH' ? 'up' : 'dn' },
+        { l: 'BOS',       v: agents.smc.report?.bos ?? '--' },
+        { l: 'OB',        v: agents.smc.report?.ob  ?? '--', c: 'info' },
+        { l: 'FVG',       v: agents.smc.report?.fvgCount ?? '--' },
+      ] : null;
+      const ewM = agents.elliott ? [
+        { l: 'Wave',  v: agents.elliott.report?.wave  ?? '?' },
+        { l: 'Stage', v: agents.elliott.report?.stage ?? '?' },
+        { l: 'Bias',  v: agents.elliott.report?.bias  ?? '?', c: agents.elliott.report?.bias === 'Bullish' ? 'up' : 'dn' },
+        { l: 'Action', v: agents.elliott.report?.action ?? '--' },
+      ] : null;
+      const fibM = agents.fib ? [
+        { l: 'Level',   v: agents.fib.report?.nearest ?? '--', c: 'info' },
+        { l: 'TP1',     v: agents.fib.report?.tp1 ?? '--', c: 'up' },
+        { l: 'SL',      v: agents.fib.report?.sl  ?? '--', c: 'dn' },
+        { l: 'R:R',     v: agents.fib.report?.rr  ?? '--', c: 'warn' },
+      ] : null;
+      const rsiM = agents.rsi ? [
+        { l: 'RSI 14',  v: agents.rsi.report?.rsi14 ?? '--' },
+        { l: 'ADX',     v: agents.rsi.report?.adx   ?? '--' },
+        { l: 'Div',     v: agents.rsi.report?.div   ?? '--', c: agents.rsi.report?.div?.includes('⚠️') ? 'warn' : '' },
+        { l: 'VP Zone', v: agents.rsi.report?.pos   ?? '--', c: 'info' },
+      ] : null;
+      const macdM = agents.macd ? [
+        { l:'MACD',      v: agents.macd.report?.macd ?? '--' },
+        { l:'Histogram', v: agents.macd.report?.histogram ?? '--' },
+        { l:'Cross',     v: agents.macd.report?.cross ?? '--', c: agents.macd.report?.cross?.includes('Bull')?'up':'dn' },
+        { l:'Momentum',  v: agents.macd.report?.momentum ?? '--' },
+      ] : null;
+      const bbM = agents.bollinger ? [
+        { l:'Position', v: agents.bollinger.report?.position ?? '--', c: 'info' },
+        { l:'BW',       v: agents.bollinger.report?.bandwidth ?? '--' },
+        { l:'State',    v: agents.bollinger.report?.state ?? '--' },
+        { l:'SMA',      v: agents.bollinger.report?.sma ?? '--' },
+      ] : null;
+      const ptnM = agents.pattern ? [
+        { l:'Pattern',  v: agents.pattern.report?.pattern ?? '--', c: 'info' },
+        { l:'Body %',   v: agents.pattern.report?.bodyPct ?? '--' },
+        { l:'Up Wick',  v: agents.pattern.report?.upperWick ?? '--' },
+        { l:'Lo Wick',  v: agents.pattern.report?.lowerWick ?? '--' },
+      ] : null;
 
-      const sigColor = teamData.signal === 'buy' ? '#00ff41' : teamData.signal === 'sell' ? '#ff3333' : '#ffe600';
       return `<div style="border-top:1px solid var(--border);padding:4px 0 0">
         <div style="font-size:7px;padding:4px 10px;color:var(--teal);border-bottom:1px solid var(--border)">
           ${sym} — <span class="${this.sigColor(teamData.signal)}">${this.sigText(teamData.signal)}</span>
@@ -256,10 +274,13 @@ const UI = {
           <span style="float:right;font-size:6px;color:var(--white)">@ ${teamData.price?.toFixed(d)}</span>
         </div>
         <div class="analyst-grid">
-          ${this.analystCard('⚡', 'SMC',     agents.smc.signal,     smcM)}
-          ${this.analystCard('🌊', 'Elliott', agents.elliott.signal, ewM)}
-          ${this.analystCard('📐', 'Fib',     agents.fib.signal,     fibM)}
-          ${this.analystCard('📊', 'RSI',     agents.rsi.signal,     rsiM)}
+          ${agents.smc       ? this.analystCard('⚡', 'SMC',       agents.smc.signal,       smcM) : ''}
+          ${agents.elliott   ? this.analystCard('🌊', 'Elliott',   agents.elliott.signal,   ewM)  : ''}
+          ${agents.fib       ? this.analystCard('📐', 'Fib',       agents.fib.signal,       fibM) : ''}
+          ${agents.rsi       ? this.analystCard('📊', 'RSI',       agents.rsi.signal,       rsiM) : ''}
+          ${agents.macd      ? this.analystCard('📈', 'MACD',      agents.macd.signal,      macdM) : ''}
+          ${agents.bollinger ? this.analystCard('🎈', 'Bollinger', agents.bollinger.signal, bbM)  : ''}
+          ${agents.pattern   ? this.analystCard('🕯', 'Pattern',   agents.pattern.signal,   ptnM) : ''}
         </div>
       </div>`;
     };

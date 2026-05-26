@@ -224,10 +224,10 @@ const TradingWarRoom = {
 
   _logAgentUpdates(goldR, fxR, cmdR) {
     const logQueue = [
-      { team:'GOLD', agent:'SMC-Gold',    msg: goldR.agents.smc.log },
-      { team:'GOLD', agent:'Elliott-Gold', msg: goldR.agents.elliott.log },
-      { team:'GOLD', agent:'Fib-Gold',     msg: goldR.agents.fib.log },
-      { team:'GOLD', agent:'RSI-Gold',     msg: goldR.agents.rsi.log },
+      { team:'GOLD', agent:'SMC-Gold',     msg: goldR.agents.smc?.log },
+      { team:'GOLD', agent:'Elliott-Gold', msg: goldR.agents.elliott?.log },
+      { team:'GOLD', agent:'Fib-Gold',     msg: goldR.agents.fib?.log },
+      { team:'GOLD', agent:'RSI-Gold',     msg: goldR.agents.rsi?.log },
       { team:'FX',   agent:'SMC-AUD',      msg: fxR.aud?.agents?.smc?.log },
       { team:'FX',   agent:'SMC-EUR',      msg: fxR.eur?.agents?.smc?.log },
       { team:'FX',   agent:'News-FX',      msg: fxR.news?.log },
