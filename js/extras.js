@@ -1629,12 +1629,43 @@ const BotBridge = {
     } catch (e) { /* silent */ }
   },
 
+  // Phase 12.4: send remote command to EA via Apps Script
+  async sendCommand(cmd) {
+    const url = Settings.get('botBridgeURL', '');
+    if (!url || url.length < 20) return alert('ตั้ง Bot Bridge URL ก่อน');
+    const confirmMsgs = {
+      close_all: '⚠️ ปิด ALL positions ของบอท?\nไม้ที่กำลังกำไร/ขาดทุนจะถูกปิดทันทีตามราคาตลาด',
+      pause:     '⏸ หยุดเทรดชั่วคราว?\nบอทจะไม่เปิด order ใหม่ แต่จะดูแล position ที่เปิดอยู่ต่อ',
+      resume:    '▶️ เริ่มเทรดต่อ?',
+      reset_pnl: '🔄 Reset ตัวเลข W/L/PnL วันนี้?'
+    };
+    if (!confirm(confirmMsgs[cmd] || ('Send: ' + cmd))) return;
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        mode:   'no-cors',  // Apps Script needs no-cors for cross-origin POST
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body:    JSON.stringify({ type: 'cmd', secret: 'twr-secret', cmd: cmd })
+      });
+      // no-cors → can't read response; assume queued
+      const el = document.getElementById('bot-cmd-status');
+      if (el) {
+        el.textContent = '✓ Command sent: ' + cmd + ' (EA จะรับใน 15s)';
+        el.style.color = 'var(--green)';
+        setTimeout(() => { el.textContent = ''; }, 4000);
+      }
+    } catch (e) {
+      alert('Send failed: ' + e.message);
+    }
+  },
+
   render() {
     const el = document.getElementById('bot-status-body');
     if (!el || !this.lastStatus) return;
     const s = this.lastStatus;
     const onlineColor = s.online ? 'var(--green)' : 'var(--red)';
     const onlineText  = s.online ? '🟢 ONLINE' : '🔴 OFFLINE (' + s.ageSec + 's ago)';
+    const pausedBadge = s.paused ? '<span style="color:var(--orange);font-size:7px;margin-left:6px">⏸ PAUSED</span>' : '';
 
     const positions = (s.positions || []).map(p => {
       const sideEm = p.side === 'buy' ? '▲' : '▼';
@@ -1654,10 +1685,22 @@ const BotBridge = {
     const pnlCls = s.todayPnL > 0 ? 'text-green' : s.todayPnL < 0 ? 'text-red' : 'text-gray';
 
     el.innerHTML = `
+      <!-- Phase 12.4: Remote Control Buttons -->
+      <div style="display:flex;gap:4px;margin-bottom:8px;padding:6px;border:1px solid var(--border);background:var(--bg-card)">
+        <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--red);color:#fff" onclick="BotBridge.sendCommand('close_all')">🔴 Close All</button>
+        ${s.paused
+          ? `<button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--green);color:#000" onclick="BotBridge.sendCommand('resume')">▶️ Resume</button>`
+          : `<button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--orange)" onclick="BotBridge.sendCommand('pause')">⏸ Pause</button>`
+        }
+        <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px" onclick="BotBridge.sendCommand('reset_pnl')">🔄 Reset Today</button>
+        <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;margin-left:auto" onclick="BotBridge.tick()">⟳ Refresh</button>
+        <span id="bot-cmd-status" style="font-size:6px;color:var(--gray);align-self:center;margin-left:8px"></span>
+      </div>
+
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--border)">
         <div style="background:var(--bg-card);padding:8px;text-align:center">
           <div style="font-size:6px;color:var(--gray)">Status</div>
-          <div style="font-size:8px;color:${onlineColor};margin-top:3px">${onlineText}</div>
+          <div style="font-size:8px;color:${onlineColor};margin-top:3px">${onlineText}${pausedBadge}</div>
         </div>
         <div style="background:var(--bg-card);padding:8px;text-align:center">
           <div style="font-size:6px;color:var(--gray)">Balance</div>

@@ -55,6 +55,8 @@ input string  WebhookURL         = "";            // Apps Script URL (paste afte
 input string  WebhookSecret      = "twr-secret";  // Match Apps Script secret
 input int     WebPushSec         = 30;            // Push status every N seconds (scalp = 15-30s)
 input string  WatchXAU           = "XAUUSDm";     // XAU symbol for price feed (Phase 12.3)
+input int     CommandPollSec     = 15;            // Poll web commands every N seconds (Phase 12.4)
+input bool    AllowRemoteControl = true;          // Allow Close All / Pause from web (Phase 12.4)
 
 //═══════════════════ GLOBALS ════════════════════════════════════════
 CTrade        trade;
@@ -62,6 +64,9 @@ CPositionInfo posInfo;
 
 datetime      lastSignalTime[2];
 datetime      lastWebPush = 0;
+datetime      lastCmdPoll = 0;
+int           lastCmdId   = 0;       // last processed command ID
+bool          eaPaused    = false;   // Phase 12.4: remote pause flag
 int           rsiHandle[2], bbHandle[2], atrHandle[2];
 string        symbols[2];
 int           tradesToday_W = 0, tradesToday_L = 0;
@@ -125,6 +130,7 @@ void OnTick() {
    // Update dashboard + web push (every tick is OK, they have internal throttle)
    if (ShowDashboard) UpdateDashboard();
    PushToWeb();
+   PollWebCommands();    // Phase 12.4: check for remote commands
 
    // Only run signal check on new bar to save CPU
    static datetime lastBar = 0;
@@ -137,6 +143,9 @@ void OnTick() {
 
    // Update today's stats (after each new bar)
    UpdateTodayStats();
+
+   // Phase 12.4: skip trading if paused remotely
+   if (eaPaused) return;
 
    // Session filter
    if (OnlyLondonNY && !IsLondonNYSession()) return;
@@ -404,6 +413,7 @@ void PushToWeb() {
       "\"balance\":%.2f,\"equity\":%.2f,\"freeMargin\":%.2f,"
       "\"todayWins\":%d,\"todayLosses\":%d,\"todayPnL\":%.2f,"
       "\"symbols\":[\"%s\",\"%s\"],"
+      "\"paused\":%s,"
       "\"prices\":%s,"
       "\"positions\":[%s]}",
       WebhookSecret, (int)TimeCurrent(),
@@ -412,6 +422,7 @@ void PushToWeb() {
       AccountInfoDouble(ACCOUNT_MARGIN_FREE),
       tradesToday_W, tradesToday_L, pnlToday,
       Symbol1, Symbol2,
+      (eaPaused ? "true" : "false"),
       pxJson,
       posJson
    );
@@ -510,4 +521,71 @@ string BuildPricesJson() {
    }
    out += "}";
    return out;
+}
+
+//═══════════════════ PHASE 12.4: Remote Command Polling ═══════════════
+// EA polls /?action=command every CommandPollSec seconds.
+// Commands: close_all, pause, resume, reset_pnl
+void PollWebCommands() {
+   if (!AllowRemoteControl) return;
+   if (StringLen(WebhookURL) < 10) return;
+   if (TimeCurrent() - lastCmdPoll < CommandPollSec) return;
+   lastCmdPoll = TimeCurrent();
+
+   string url = WebhookURL + "?action=command&secret=" + WebhookSecret + "&since=" + IntegerToString(lastCmdId);
+   char post[]; char result[]; string headers;
+   ResetLastError();
+   int code = WebRequest("GET", url, "", 5000, post, result, headers);
+   if (code != 200) return;
+
+   string body = CharArrayToString(result, 0, -1, CP_UTF8);
+   if (StringLen(body) < 10) return;
+
+   // Parse simple JSON: {"ok":true,"cmd":"close_all","id":5}
+   // Cheap string-based parser (no JSON lib in MQL5 core)
+   int idPos = StringFind(body, "\"id\":");
+   if (idPos < 0) return;
+   int idVal = (int)StringToInteger(StringSubstr(body, idPos + 5, 10));
+   if (idVal <= lastCmdId) return;     // already processed
+
+   int cmdPos = StringFind(body, "\"cmd\":\"");
+   if (cmdPos < 0) return;
+   int cmdStart = cmdPos + 7;
+   int cmdEnd = StringFind(body, "\"", cmdStart);
+   if (cmdEnd < 0) return;
+   string cmd = StringSubstr(body, cmdStart, cmdEnd - cmdStart);
+
+   ExecuteCommand(cmd);
+   lastCmdId = idVal;
+}
+
+void ExecuteCommand(string cmd) {
+   if (cmd == "close_all") {
+      int closed = CloseAllMyPositions();
+      Print("🔴 REMOTE: Close All → closed ", closed, " positions");
+   }
+   else if (cmd == "pause") {
+      eaPaused = true;
+      Print("⏸ REMOTE: EA paused (no new trades, existing positions managed)");
+   }
+   else if (cmd == "resume") {
+      eaPaused = false;
+      Print("▶️ REMOTE: EA resumed");
+   }
+   else if (cmd == "reset_pnl") {
+      tradesToday_W = 0;
+      tradesToday_L = 0;
+      pnlToday = 0;
+      Print("🔄 REMOTE: Today stats reset");
+   }
+}
+
+int CloseAllMyPositions() {
+   int closed = 0;
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      if (!posInfo.SelectByIndex(i)) continue;
+      if (posInfo.Magic() != MagicNumber) continue;
+      if (trade.PositionClose(posInfo.Ticket())) closed++;
+   }
+   return closed;
 }

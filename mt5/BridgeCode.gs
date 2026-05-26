@@ -1,12 +1,14 @@
 /**
- * MT5 Bridge — Apps Script Web App (Phase 12.3)
+ * MT5 Bridge — Apps Script Web App (Phase 12.4)
  *
  * Endpoints:
- *   POST /                 ← EA pushes status + prices
- *   GET  /?action=status   → Latest status JSON (balance, equity, positions...)
- *   GET  /?action=prices   → Latest prices (bid/ask/RSI/ATR/BB for each symbol)
- *   GET  /?action=history  → Last 100 status snapshots
- *   GET  /?action=clear    → Wipe stored data
+ *   POST /                            ← EA pushes status + prices
+ *        body: {type:'cmd', secret, cmd, ...} from web → enqueue command
+ *   GET  /?action=status              → Latest status JSON
+ *   GET  /?action=prices              → Latest prices
+ *   GET  /?action=command&since=N     → Next pending command after id N (for EA)
+ *   GET  /?action=history             → Last 100 status snapshots
+ *   GET  /?action=clear               → Wipe stored data
  *
  * Setup:
  * 1. https://script.google.com → New project
@@ -20,7 +22,7 @@
 
 const SECRET = 'twr-secret';  // Must match EA's WebhookSecret
 
-// ─── POST: Receive status from EA ────────────────────────
+// ─── POST: Receive status from EA OR command from web ────
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
@@ -29,10 +31,26 @@ function doPost(e) {
     }
 
     const props = PropertiesService.getScriptProperties();
+
+    // ── Phase 12.4: Web → EA command enqueue ──
+    if (data.type === 'cmd') {
+      const allowed = ['close_all', 'pause', 'resume', 'reset_pnl'];
+      if (!allowed.includes(data.cmd)) {
+        return json({ ok: false, error: 'Unknown cmd' });
+      }
+      const lastId = parseInt(props.getProperty('LAST_CMD_ID') || '0', 10);
+      const newId  = lastId + 1;
+      const cmd = { id: newId, cmd: data.cmd, ts: Date.now() };
+      props.setProperty('LAST_CMD',    JSON.stringify(cmd));
+      props.setProperty('LAST_CMD_ID', String(newId));
+      return json({ ok: true, msg: 'Command queued', id: newId });
+    }
+
+    // ── EA → status push ──
     data.receivedAt = Date.now();
     props.setProperty('LATEST_STATUS', JSON.stringify(data));
 
-    // Phase 12.3: store prices separately for fast ?action=prices endpoint
+    // Phase 12.3: store prices separately
     if (data.prices && typeof data.prices === 'object') {
       const pricesPayload = {
         prices:     data.prices,
@@ -65,7 +83,7 @@ function doPost(e) {
   }
 }
 
-// ─── GET: Serve to web dashboard ─────────────────────────
+// ─── GET: Serve to web dashboard OR command to EA ────────
 function doGet(e) {
   const props = PropertiesService.getScriptProperties();
   const action = (e.parameter && e.parameter.action) || 'status';
@@ -90,6 +108,20 @@ function doGet(e) {
     return json({ ok: true, prices: data.prices, ts: data.ts, ageSec: data.ageSec, online: data.online, symbols: data.symbols });
   }
 
+  // ── Phase 12.4: EA polls for commands ──
+  if (action === 'command') {
+    // Optional secret check (EA passes it)
+    if (e.parameter.secret && e.parameter.secret !== SECRET) {
+      return json({ ok: false, error: 'Invalid secret' });
+    }
+    const since = parseInt(e.parameter.since || '0', 10);
+    const raw = props.getProperty('LAST_CMD');
+    if (!raw) return json({ ok: true, msg: 'No commands', id: 0 });
+    const cmd = JSON.parse(raw);
+    if (cmd.id <= since) return json({ ok: true, msg: 'No new commands', id: cmd.id });
+    return json({ ok: true, cmd: cmd.cmd, id: cmd.id, ts: cmd.ts });
+  }
+
   if (action === 'history') {
     const h = JSON.parse(props.getProperty('HISTORY') || '[]');
     return json({ ok: true, history: h });
@@ -98,6 +130,8 @@ function doGet(e) {
   if (action === 'clear') {
     props.deleteProperty('LATEST_STATUS');
     props.deleteProperty('LATEST_PRICES');
+    props.deleteProperty('LAST_CMD');
+    props.deleteProperty('LAST_CMD_ID');
     props.deleteProperty('HISTORY');
     return json({ ok: true, msg: 'Cleared' });
   }
@@ -105,7 +139,6 @@ function doGet(e) {
   return json({ ok: false, msg: 'Unknown action' });
 }
 
-// Helper: JSON response
 function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
