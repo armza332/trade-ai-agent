@@ -947,6 +947,55 @@ const AgentScores = {
     this.save({ agents: {}, meta: { liveTrades: 0, backtestTrades: 0, created: Date.now() } });
   },
 
+  /** Fresh Start — backup เก่าก่อนแล้วค่อย reset */
+  async freshStart() {
+    const meta = this.meta();
+    const total = (meta.liveTrades || 0) + (meta.backtestTrades || 0);
+
+    if (total < 10) {
+      // ไม่มีข้อมูลให้ backup → reset ตรงเลย
+      if (confirm(`KB ยังไม่มีข้อมูลพอที่จะ backup (${total} trades) — reset เลยไหม?`)) {
+        this.reset();
+        if (typeof Journal !== 'undefined') Journal.clear();
+        if (typeof Modal !== 'undefined') Modal.open('journal');
+      }
+      return;
+    }
+
+    const confirmMsg = `🔄 FRESH START\n\n` +
+                      `จะทำ 3 ขั้น:\n` +
+                      `1. Backup KB ปัจจุบัน (${total} trades) → คัดลอกใส่ clipboard\n` +
+                      `2. รีเซ็ต KB เป็นค่าศูนย์\n` +
+                      `3. ล้าง Journal ทั้งหมด\n\n` +
+                      `⚠️ ข้อมูลที่ผ่านการเรียนรู้จะหายไป — ต้องรัน Auto-Opt ใหม่เพื่อสร้าง KB กลับ\n\n` +
+                      `ดำเนินการต่อ?`;
+    if (!confirm(confirmMsg)) return;
+
+    // Step 1: Backup to clipboard
+    const json = this.exportJSON();
+    try {
+      await navigator.clipboard.writeText(json);
+    } catch (e) {
+      // Fallback: prompt user
+      const ok = prompt(`Copy ข้อมูลนี้เก็บไว้ก่อน (Ctrl+A → Ctrl+C):`, json.slice(0, 200) + '...(truncated)');
+      if (ok === null) return; // user cancelled
+    }
+
+    // Step 2 + 3: Reset KB + Journal
+    this.reset();
+    if (typeof Journal !== 'undefined') Journal.clear();
+
+    alert(`✅ Fresh Start สำเร็จ!\n\n` +
+          `• Backup ${total} trades → คัดลอกใน clipboard แล้ว (paste ใส่ Notepad เก็บไว้ได้)\n` +
+          `• KB + Journal: รีเซ็ตเป็น 0\n\n` +
+          `ขั้นต่อไป:\n` +
+          `1. เปิด 🔬 BACKTEST\n` +
+          `2. กด 🚀 Start Auto-Opt\n` +
+          `3. ปล่อยไว้ ~30 นาที = ได้ KB ใหม่ที่ใช้ Weight Formula + Divergence Agent ใหม่`);
+
+    if (typeof Modal !== 'undefined') Modal.open('journal');
+  },
+
   /** Trade counts per symbol */
   symbolCounts() {
     const kb = this.load();
@@ -1055,7 +1104,11 @@ const AgentScores = {
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-secondary" onclick="navigator.clipboard.writeText(AgentScores.exportJSON()).then(()=>alert('Copied to clipboard — paste in another device'))">📤 Export JSON</button>
         <button class="btn btn-secondary" onclick="const t=prompt('Paste KB JSON:');if(t){const r=AgentScores.importJSON(t);alert(r.msg);Modal.open('journal');}">📥 Import & Merge</button>
-        <button class="btn btn-secondary" onclick="if(confirm('Reset ALL knowledge?')){AgentScores.reset();Modal.open('journal');}">🔄 Reset</button>
+        <button class="btn btn-secondary" onclick="if(confirm('Reset KB only (not Journal)?')){AgentScores.reset();Modal.open('journal');}">🔄 Reset KB</button>
+        <button class="btn btn-primary" style="border-color:var(--orange);color:var(--orange)" onclick="AgentScores.freshStart()">🆕 Fresh Start (backup + reset all)</button>
+      </div>
+      <div style="margin-top:6px;font-size:6px;color:var(--gray);border-left:2px solid var(--orange);padding-left:6px">
+        💡 <b>Fresh Start</b>: ใช้เมื่อต้องการ <b>วัดผลระบบใหม่</b> หลัง update — backup + reset ในขั้นเดียว
       </div>
     `;
   },
