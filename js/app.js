@@ -206,6 +206,11 @@ const TradingWarRoom = {
     if ((cmdR.signal === 'buy' || cmdR.signal === 'sell') && this._lastGrade !== gradeInfo.grade) {
       Telegram.notify(cmdR, gradeInfo);
       UI.addLog('CMD', 'Commander', `📤 GRADE ${gradeInfo.grade} — ${cmdR.signal.toUpperCase()} ${cmdR.sym} @ ${cmdR.entry}`);
+
+      // Phase 13: Send AI signal to EA when Grade ≥ A (user must opt-in via Settings)
+      if (gradeInfo.alert && typeof BotBridge !== 'undefined') {
+        BotBridge.sendAISignal(cmdR.sym, cmdR.signal);
+      }
     }
 
     // Banner + เสียง: เฉพาะ A/S+ (high-confidence visual alert)

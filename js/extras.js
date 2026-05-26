@@ -539,6 +539,7 @@ const Modal = {
     });
     const mw = document.getElementById('s-minweight'); if (mw) mw.value = Settings.get('minAgentWeight', 0.5);
     const bb = document.getElementById('s-botbridge'); if (bb) bb.value = Settings.get('botBridgeURL', '');
+    const ws = document.getElementById('s-web-ai-signals'); if (ws) ws.checked = Settings.get('webAISignalsToEA', false);
   },
 
   saveSettings() {
@@ -581,6 +582,8 @@ const Modal = {
       Settings.set('botBridgeURL', bb.value.trim());
       if (typeof BotBridge !== 'undefined' && bb.value.trim().length > 20) BotBridge.start();
     }
+    const ws = document.getElementById('s-web-ai-signals');
+    if (ws) Settings.set('webAISignalsToEA', ws.checked);
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -1697,6 +1700,41 @@ const BotBridge = {
       symbol:  symKey,
       source:  'live',
     });
+  },
+
+  // Phase 13: Web AI → EA signal pipeline
+  // Auto-called from app.js when Commander emits Grade A+ buy/sell signal
+  // Sends ai_buy_<SYM> or ai_sell_<SYM> command; EA bypasses cooldown
+  _lastAISignalKey: null,
+  async sendAISignal(sym, side) {
+    if (!Settings.get('webAISignalsToEA', false)) return;        // user must opt-in
+    const url = Settings.get('botBridgeURL', '');
+    if (!url || url.length < 20) return;
+    // Map web symbol (XAUUSD/AUDUSD/EURUSD) to broker symbol (add 'm' suffix Exness Cent demo)
+    const brokerSym = this._mapToBrokerSym(sym);
+    if (!brokerSym) return;
+    // Dedupe — don't spam if same signal repeats every analysis tick
+    const key = brokerSym + '_' + side + '_' + Math.floor(Date.now() / (5 * 60 * 1000));
+    if (this._lastAISignalKey === key) return;
+    this._lastAISignalKey = key;
+
+    const cmd = 'ai_' + side + '_' + brokerSym;
+    try {
+      await fetch(url, {
+        method: 'POST',
+        mode:   'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body:    JSON.stringify({ type: 'cmd', secret: 'twr-secret', cmd })
+      });
+      console.log(`🧠 Phase 13: AI signal sent → ${cmd}`);
+    } catch (e) { /* silent */ }
+  },
+
+  _mapToBrokerSym(webSym) {
+    // Try to find matching symbol from last status (broker-actual names)
+    const known = this.lastStatus?.symbols || [];
+    const base = webSym.replace(/\W/g, '').toUpperCase();  // XAUUSD, AUDUSD, EURUSD
+    return known.find(s => s.toUpperCase().startsWith(base)) || null;
   },
 
   // Phase 12.4: send remote command to EA via Apps Script

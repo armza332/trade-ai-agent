@@ -69,6 +69,7 @@ input int     WebPushSec         = 30;            // Push status every N seconds
 input string  WatchXAU           = "XAUUSDm";     // XAU symbol for price feed (Phase 12.3)
 input int     CommandPollSec     = 15;            // Poll web commands every N seconds (Phase 12.4)
 input bool    AllowRemoteControl = true;          // Allow Close All / Pause from web (Phase 12.4)
+input bool    AcceptWebSignals   = false;         // 🧠 Phase 13: Accept AI trade signals from web (KB-guided)
 
 //═══════════════════ GLOBALS ════════════════════════════════════════
 CTrade        trade;
@@ -880,6 +881,45 @@ void ExecuteCommand(string cmd) {
          PrintFormat("🎚 REMOTE: Symbol %d (%s) → %s", idx+1, symbols[idx], (on ? "ON" : "OFF"));
       }
    }
+   // Phase 13: AI signal from web — format ai_buy_<SYM> or ai_sell_<SYM>
+   else if (StringFind(cmd, "ai_buy_") == 0 || StringFind(cmd, "ai_sell_") == 0) {
+      if (!AcceptWebSignals) { Print("🚫 AI signal received but AcceptWebSignals=false"); return; }
+      if (eaPaused)          { Print("⏸ EA paused — ignoring AI signal"); return; }
+      bool isBuy = (StringFind(cmd, "ai_buy_") == 0);
+      string sym = StringSubstr(cmd, isBuy ? 7 : 8);   // strip prefix
+      ExecuteAISignal(sym, isBuy);
+   }
+}
+
+// Phase 13: Execute trade requested by web AI (bypasses cooldown, uses current ATR for SL)
+void ExecuteAISignal(string sym, bool isBuy) {
+   // Find symbol index in active list
+   int idx = -1;
+   for (int i = 0; i < nActiveSyms; i++) {
+      if (symbols[i] == sym) { idx = i; break; }
+   }
+   if (idx < 0) {
+      PrintFormat("🚫 AI signal for %s — not in EA active symbols, skipped", sym);
+      return;
+   }
+   if (!runEnabled[idx]) {
+      PrintFormat("🚫 AI signal for %s — symbol disabled by user, skipped", sym);
+      return;
+   }
+   if (CountPositions(sym) >= effMaxPos) {
+      PrintFormat("🚫 AI signal for %s — max positions reached, skipped", sym);
+      return;
+   }
+
+   // Get current ATR for SL distance
+   double atrArr[]; ArraySetAsSeries(atrArr, true);
+   double rsiArr[]; ArraySetAsSeries(rsiArr, true);
+   if (CopyBuffer(atrHandle[idx], 0, 0, 1, atrArr) != 1) return;
+   if (CopyBuffer(rsiHandle[idx], 0, 0, 1, rsiArr) != 1) return;
+
+   PrintFormat("🧠 AI SIGNAL: %s %s (bypass cooldown)", sym, isBuy ? "BUY" : "SELL");
+   ExecuteTrade(sym, idx, isBuy, atrArr[0], rsiArr[0]);
+   // Don't update lastSignalTime — AI signal is exempt
 }
 
 int CloseAllMyPositions() {
