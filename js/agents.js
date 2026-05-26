@@ -1005,15 +1005,14 @@ class HeadAgent extends BaseAgent {
     const weights = { 'buy': 1, 'sell': -1, 'watch': 0, 'wait': 0 };
     let weightedScore = 0, totalWeight = 0;
 
-    // Smart Filter: skip agents with weightMul < 0.5 (KB says they're bad in this context)
-    // ป้องกัน agent ที่ทายผิดบ่อย → drag down decision
     const minWeight = typeof Settings !== 'undefined' ? Settings.get('minAgentWeight', 0.5) : 0.5;
 
-    results.forEach(r => {
-      if (!r) return;
-      // Skip if KB has marked this agent unreliable
-      if (r.weightMul !== undefined && r.weightMul < minWeight) return;
-      const w = (r.conf / 100) * (r.signal === 'buy' || r.signal === 'sell' ? 1.5 : 0.5);
+    const activeResults = results.filter(r => r && (r.weightMul === undefined || r.weightMul >= minWeight));
+
+    // Phase 14.2: Top-performer boost — agents with weightMul > 1.2 get 1.5x say
+    activeResults.forEach(r => {
+      const kbBoost = (r.weightMul !== undefined && r.weightMul > 1.2) ? 1.5 : 1.0;
+      const w = (r.conf / 100) * (r.signal === 'buy' || r.signal === 'sell' ? 1.5 : 0.5) * kbBoost;
       weightedScore += (weights[r.signal] ?? 0) * r.conf * w;
       totalWeight   += r.conf * w;
     });
@@ -1022,18 +1021,46 @@ class HeadAgent extends BaseAgent {
 
     // Count votes
     const votes = { buy: 0, sell: 0, wait: 0, watch: 0 };
-    results.forEach(r => { if (r) votes[r.signal] = (votes[r.signal] || 0) + 1; });
+    activeResults.forEach(r => { votes[r.signal] = (votes[r.signal] || 0) + 1; });
 
-    const signal = normalized >= 0.3 ? 'buy' :
-                   normalized <= -0.3 ? 'sell' :
-                   Math.abs(normalized) < 0.1 ? 'wait' : 'watch';
+    // ── Phase 14.2: Consensus + Conflict analysis ──
+    const total      = activeResults.length;
+    const directional = (votes.buy + votes.sell);
+    const dominant   = Math.max(votes.buy, votes.sell);
+    const consensusPct = total > 0 ? (dominant / total) * 100 : 0;
+    // Conflict = directional vote going opposite to weighted normalized
+    const proposedSig = normalized > 0 ? 'buy' : normalized < 0 ? 'sell' : 'wait';
+    const conflictCount = proposedSig === 'buy' ? votes.sell : proposedSig === 'sell' ? votes.buy : 0;
+    const conflictPct = total > 0 ? (conflictCount / total) * 100 : 0;
 
-    const conf = Math.min(90, Math.abs(normalized) * 100 + 30);
+    // Base signal from normalized score
+    let signal = normalized >= 0.3 ? 'buy' :
+                 normalized <= -0.3 ? 'sell' :
+                 Math.abs(normalized) < 0.1 ? 'wait' : 'watch';
+
+    // Base conf
+    let conf = Math.min(90, Math.abs(normalized) * 100 + 30);
+
+    // Consensus bonus: if ≥70% agents agree on direction → +10 confidence
+    if (consensusPct >= 70 && (signal === 'buy' || signal === 'sell')) {
+      conf = Math.min(95, conf + 10);
+    }
+    // Conflict penalty: if ≥30% agents disagree → -15 confidence; signal may downgrade
+    if (conflictPct >= 30 && (signal === 'buy' || signal === 'sell')) {
+      conf = Math.max(30, conf - 15);
+      if (conflictPct >= 40) signal = 'watch';   // strong conflict → don't trade
+    }
 
     this.signal = signal;
     this.conf   = Math.round(conf);
 
-    return { signal, conf: Math.round(conf), votes, normalized, analysts: results };
+    return {
+      signal, conf: Math.round(conf), votes, normalized,
+      consensusPct: Math.round(consensusPct),
+      conflictPct:  Math.round(conflictPct),
+      activeCount:  total,
+      analysts: results
+    };
   }
 }
 
@@ -1255,19 +1282,39 @@ class Commander {
       }
     }
 
+    // Phase 14.2: Commander consensus filter
+    // Require minimum team consensus before generating buy/sell
+    const minConsensus = 55;   // need 55%+ agents on same side to trade
+    const goldConsensus = goldReport.head.consensusPct ?? 0;
+    const audConsensus  = currReport.aud?.consensusPct ?? currReport.head.consensusPct ?? 0;
+    const eurConsensus  = currReport.eur?.consensusPct ?? currReport.head.consensusPct ?? 0;
+
+    if ((goldSig === 'buy' || goldSig === 'sell') && goldConsensus < minConsensus) {
+      goldSig = 'watch';
+      goldConf = Math.max(30, goldConf - 20);
+    }
+    if ((currSig === 'buy' || currSig === 'sell')) {
+      const usedConsensus = currReport.head.leadPair === 'AUDUSD' ? audConsensus : eurConsensus;
+      if (usedConsensus < minConsensus) {
+        currSig = 'watch';
+        currConf = Math.max(30, currConf - 20);
+      }
+    }
+
     // Pick highest-confidence actionable signal
     let primary = null;
     if ((goldSig === 'buy' || goldSig === 'sell') && goldConf >= 50) {
-      primary = { sym: 'XAUUSD', signal: goldSig, conf: goldConf, price: goldReport.price, cfg: goldReport.cfg };
+      primary = { sym: 'XAUUSD', signal: goldSig, conf: goldConf, price: goldReport.price, cfg: goldReport.cfg, consensus: goldConsensus };
     }
     if ((currSig === 'buy' || currSig === 'sell') && currConf >= (primary?.conf ?? 0)) {
       const fxSym = currReport.head.leadPair;
       const fxData = fxSym === 'AUDUSD' ? currReport.aud : currReport.eur;
-      primary = { sym: fxSym, signal: currSig, conf: currConf, price: fxData.price, cfg: fxData.cfg };
+      const fxConsensus = fxSym === 'AUDUSD' ? audConsensus : eurConsensus;
+      primary = { sym: fxSym, signal: currSig, conf: currConf, price: fxData.price, cfg: fxData.cfg, consensus: fxConsensus };
     }
 
     if (!primary) {
-      primary = { sym: 'ALL', signal: 'wait', conf: 30, price: goldReport.price, cfg: goldReport.cfg };
+      primary = { sym: 'ALL', signal: 'wait', conf: 30, price: goldReport.price, cfg: goldReport.cfg, consensus: 0 };
     }
 
     const { sym, signal, conf, price, cfg } = primary;
@@ -1348,6 +1395,10 @@ class Commander {
       riskWarning,
       votes:  allVotes,
       goldSig, goldConf, currSig, currConf,
+      consensus: primary.consensus ?? 0,
+      goldConsensus: Math.round(goldConsensus),
+      audConsensus:  Math.round(audConsensus),
+      eurConsensus:  Math.round(eurConsensus),
       summary: signal === 'wait' || signal === 'watch'
         ? `⏸ STANDBY — No high-confidence setup detected`
         : `${signal.toUpperCase()} ${sym} @ ${price.toFixed(d)} | SL ${sl.toFixed(d)} | TP1 ${tp1.toFixed(d)}`,

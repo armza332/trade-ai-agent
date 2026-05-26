@@ -503,6 +503,27 @@ const UI = {
         <div style="margin-top:8px;font-size:6px;border-left:2px solid var(--purple);padding-left:6px;color:var(--white)">
           ${report.summary}
         </div>
+        <!-- Phase 14.2: Team consensus display -->
+        <div style="margin-top:6px;padding:5px;background:rgba(0,255,255,0.05);border:1px solid var(--teal);font-size:6px">
+          <div style="color:var(--teal);margin-bottom:3px;font-weight:bold">👥 TEAM CONSENSUS</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;text-align:center">
+            <div>
+              <span style="color:var(--gray)">XAU</span><br>
+              <span style="color:${(report.goldConsensus||0)>=70?'var(--green)':(report.goldConsensus||0)>=55?'var(--yellow)':'var(--red)'};font-size:9px">${report.goldConsensus ?? 0}%</span>
+            </div>
+            <div>
+              <span style="color:var(--gray)">AUD</span><br>
+              <span style="color:${(report.audConsensus||0)>=70?'var(--green)':(report.audConsensus||0)>=55?'var(--yellow)':'var(--red)'};font-size:9px">${report.audConsensus ?? 0}%</span>
+            </div>
+            <div>
+              <span style="color:var(--gray)">EUR</span><br>
+              <span style="color:${(report.eurConsensus||0)>=70?'var(--green)':(report.eurConsensus||0)>=55?'var(--yellow)':'var(--red)'};font-size:9px">${report.eurConsensus ?? 0}%</span>
+            </div>
+          </div>
+          <div style="margin-top:4px;font-size:5px;color:var(--gray);text-align:center;font-style:italic">
+            ≥70% = strong consensus · 55-69% = okay · &lt;55% = downgrade to WATCH
+          </div>
+        </div>
         <div style="margin-top:6px;font-size:6px;color:var(--gray)">
           ⚠️ This is AI analysis only.<br>
           Always manage your own risk.
