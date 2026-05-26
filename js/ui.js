@@ -36,14 +36,61 @@ const UI = {
     </div>`;
   },
 
-  // ── Analyst card ──
+  // ── Pixel art profile lookup (Phase 14.1) ──
+  // Each agent has: emoji face, job title, mood per signal
+  _agentProfile(name) {
+    const t = (name || '').toUpperCase();
+    const profiles = {
+      'SMC':        { face: '🧐', title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC' },
+      'SMC ANALYST':{ face: '🧐', title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC' },
+      'ELLIOTT':    { face: '🧙', title: 'Wave Master',      bg: '#00ffff', short: 'EW'  },
+      'ELLIOTT WAVE':{face: '🧙', title: 'Wave Master',      bg: '#00ffff', short: 'EW'  },
+      'FIBONACCI':  { face: '👨‍🏫', title: 'Geometry Sensei', bg: '#ffd700', short: 'FIB' },
+      'FIB':        { face: '👨‍🏫', title: 'Geometry Sensei', bg: '#ffd700', short: 'FIB' },
+      'RSI':        { face: '🏃', title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI' },
+      'RSI / VALUE':{ face: '🏃', title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI' },
+      'MACD':       { face: '👨‍🚀', title: 'Trend Pilot',     bg: '#7fff00', short: 'MCD' },
+      'BOLLINGER':  { face: '🧜', title: 'Volatility Diver', bg: '#1e90ff', short: 'BB'  },
+      'PIVOT':      { face: '🏛', title: 'S/R Architect',    bg: '#a0522d', short: 'PVT' },
+      'PATTERN':    { face: '🕯', title: 'Candle Reader',    bg: '#ff6347', short: 'PTN' },
+      'DIVERGENCE': { face: '🕵', title: 'Reversal Hunter',  bg: '#9370db', short: 'DIV' },
+      'MULTI-TF':   { face: '🧝', title: 'Time Sage',        bg: '#20b2aa', short: 'MTF' },
+      'ICHIMOKU':   { face: '🥷', title: 'Cloud Samurai',    bg: '#dc143c', short: 'ICH' },
+      'DXY':        { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
+      'DXY (USD)':  { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
+      'NEWS':       { face: '📺', title: 'News Anchor',      bg: '#ff1493', short: 'NWS' },
+    };
+    return profiles[t] || { face: '👤', title: 'Analyst', bg: '#888', short: t.slice(0,3) };
+  },
+
+  // ── Pixel-art ID badge avatar ──
+  _avatarBadge(name, signal) {
+    const p = this._agentProfile(name);
+    const sigCol = signal === 'buy' ? '#00ff41' : signal === 'sell' ? '#ff3333' : signal === 'watch' ? '#ff8c00' : '#ffe600';
+    return `
+      <div class="agent-avatar" style="
+        display:inline-flex;align-items:center;gap:4px;
+        padding:3px 5px;
+        background:linear-gradient(135deg, ${p.bg}33 0%, ${p.bg}11 100%);
+        border:1px solid ${p.bg}88;
+        border-left:3px solid ${sigCol};
+        image-rendering:pixelated">
+        <span style="font-size:14px;line-height:1;filter:drop-shadow(1px 1px 0 #000);text-shadow:0 0 2px #000">${p.face}</span>
+        <div style="display:flex;flex-direction:column;line-height:1.1">
+          <span style="font-size:6px;color:${p.bg};font-weight:bold;letter-spacing:0.5px">[${p.short}]</span>
+          <span style="font-size:5px;color:#aaa;font-style:italic">${p.title}</span>
+        </div>
+      </div>`;
+  },
+
+  // ── Analyst card (Phase 14.1: with pixel-art avatars) ──
   analystCard(icon, name, signal, metrics, extra = '') {
     const cls = this.sigClass(signal);
     return `<div class="analyst-card">
-      <div class="a-header">
-        <span class="a-icon">${icon}</span>
+      <div class="a-header" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${this._avatarBadge(name, signal)}
         <span class="a-name">${name}</span>
-        <span class="a-status ${this.sigColor(signal)}">${this.sigText(signal)}</span>
+        <span class="a-status ${this.sigColor(signal)}" style="margin-left:auto">${this.sigText(signal)}</span>
       </div>
       ${metrics.map(m => `
         <div class="a-metric">
@@ -96,11 +143,25 @@ const UI = {
     </div>`;
   },
 
-  // ── Head agent bar ──
+  // ── Head agent bar (Phase 14.1: pixel-art commander look) ──
   headAgentBar(name, signal, conf, sub = '') {
     const col = signal === 'buy' ? '#00ff41' : signal === 'sell' ? '#ff3333' : signal === 'watch' ? '#ff8c00' : '#ffe600';
+    // Pick character based on team name
+    const isGold = (name + '').includes('Gold');
+    const isFX   = (name + '').includes('FX');
+    const isCmd  = (name + '').includes('Commander');
+    const face = isGold ? '🤴' : isFX ? '🦸' : isCmd ? '👑' : '🎖';
+    const rank = isGold ? 'GOLD CHIEF' : isFX ? 'FX MAJOR' : isCmd ? 'COMMANDER' : 'OFFICER';
     return `<div class="head-agent">
-      <div class="agent-sprite" style="color:${col}">👑</div>
+      <div class="agent-sprite" style="
+        color:${col};
+        background:linear-gradient(135deg, ${col}22 0%, transparent 100%);
+        border:1px solid ${col}66;
+        padding:4px;
+        font-size:28px;
+        image-rendering:pixelated;
+        text-shadow:2px 2px 0 #000, 0 0 4px ${col}">${face}</div>
+      <div style="position:absolute;top:2px;left:2px;font-size:5px;color:${col};font-weight:bold;letter-spacing:1px;background:#000;padding:1px 3px">${rank}</div>
       <div class="head-info">
         <div class="name">${name}</div>
         <div class="role">Team Leader</div>
@@ -210,6 +271,23 @@ const UI = {
         { l:'Signals',    v: agents.divergence.report.divergences ?? '--', c: 'info' },
       ]);
     }
+    // Phase 14: Ichimoku panel
+    if (agents.ichimoku) {
+      extraCards += this.analystCard('🌥', 'Ichimoku', agents.ichimoku.signal, [
+        { l:'Position', v: agents.ichimoku.report.position ?? '--', c: agents.ichimoku.report.position?.includes('Above')?'up':agents.ichimoku.report.position?.includes('Below')?'down':'warn' },
+        { l:'Tenkan',   v: agents.ichimoku.report.tenkan ?? '--' },
+        { l:'Kijun',    v: agents.ichimoku.report.kijun ?? '--' },
+        { l:'Chikou',   v: agents.ichimoku.report.chikou ?? '--', c: agents.ichimoku.report.chikou?.includes('Bull')?'up':'down' },
+      ]);
+    }
+    // Phase 14: DXY panel
+    if (agents.dxy) {
+      extraCards += this.analystCard('💵', 'DXY (USD)', agents.dxy.signal, [
+        { l:'Trend',   v: agents.dxy.report.dxyTrend ?? '--', c: agents.dxy.report.dxyTrend?.includes('▲')?'down':'up' },
+        { l:'Bias',    v: agents.dxy.report.pairBias ?? '--', c: 'info' },
+        { l:'Source',  v: agents.dxy.report.source ?? '--' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}
@@ -280,6 +358,18 @@ const UI = {
         { l:'Up Wick',  v: agents.pattern.report?.upperWick ?? '--' },
         { l:'Lo Wick',  v: agents.pattern.report?.lowerWick ?? '--' },
       ] : null;
+      // Phase 14
+      const ichM = agents.ichimoku ? [
+        { l:'Position', v: agents.ichimoku.report?.position ?? '--', c: agents.ichimoku.report?.position?.includes('Above')?'up':agents.ichimoku.report?.position?.includes('Below')?'dn':'warn' },
+        { l:'Tenkan',   v: agents.ichimoku.report?.tenkan ?? '--' },
+        { l:'Kijun',    v: agents.ichimoku.report?.kijun ?? '--' },
+        { l:'Chikou',   v: agents.ichimoku.report?.chikou ?? '--', c: agents.ichimoku.report?.chikou?.includes('Bull')?'up':'dn' },
+      ] : null;
+      const dxyM = agents.dxy ? [
+        { l:'Trend',   v: agents.dxy.report?.dxyTrend ?? '--', c: agents.dxy.report?.dxyTrend?.includes('▲')?'dn':'up' },
+        { l:'Bias',    v: agents.dxy.report?.pairBias ?? '--', c: 'info' },
+        { l:'Source',  v: agents.dxy.report?.source ?? '--' },
+      ] : null;
 
       return `<div style="border-top:1px solid var(--border);padding:4px 0 0">
         <div style="font-size:7px;padding:4px 10px;color:var(--teal);border-bottom:1px solid var(--border)">
@@ -295,6 +385,8 @@ const UI = {
           ${agents.macd      ? this.analystCard('📈', 'MACD',      agents.macd.signal,      macdM) : ''}
           ${agents.bollinger ? this.analystCard('🎈', 'Bollinger', agents.bollinger.signal, bbM)  : ''}
           ${agents.pattern   ? this.analystCard('🕯', 'Pattern',   agents.pattern.signal,   ptnM) : ''}
+          ${agents.ichimoku  ? this.analystCard('🌥', 'Ichimoku',  agents.ichimoku.signal,  ichM) : ''}
+          ${agents.dxy       ? this.analystCard('💵', 'DXY',       agents.dxy.signal,       dxyM) : ''}
         </div>
       </div>`;
     };
