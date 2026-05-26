@@ -974,6 +974,61 @@ const AgentScores = {
     return sorted;
   },
 
+  /** Apply recommended config — auto-set symbol filter + analyst toggles */
+  applyRecommended() {
+    const rec = this.recommendStrategy();
+    if (!rec[0] || rec[0].topAgents.length < 2) {
+      alert('❌ ยังไม่มีข้อมูลพอจะแนะนำ — รัน Auto-Opt เพิ่มก่อน');
+      return;
+    }
+
+    const best = rec[0];
+    const losers = rec.filter(s => s.totalR < 0).map(s => s.symbol);
+
+    // ALL agent types from any symbol
+    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'];
+
+    // For each agent type, check if ANY symbol has it profitable (>30R)
+    const winners = new Set();
+    rec.forEach(s => s.topAgents.forEach(a => winners.add(a.shortName)));
+
+    // Build summary
+    let report = `🎯 จะ apply config นี้:\n\n`;
+    report += `📌 Symbol Filter: เปิดเฉพาะ ${best.symbol}\n`;
+    if (rec[1]?.totalR > 30) report += `   + ${rec[1].symbol} (รองมา)\n`;
+    report += `\n✅ เปิด analysts: ${[...winners].join(', ')}\n`;
+    const disabled = ALL_AGENTS.filter(a => !winners.has(a) && a !== 'MTF' && a !== 'News');
+    if (disabled.length > 0) report += `❌ ปิด analysts: ${disabled.join(', ')}\n`;
+    report += `\nดำเนินการต่อ?`;
+
+    if (!confirm(report)) return;
+
+    // 1. Symbol filter — enable best + good runner-up
+    Settings.set('enableXAU', best.symbol === 'XAUUSD' || rec[1]?.symbol === 'XAUUSD' && rec[1].totalR > 30);
+    Settings.set('enableAUD', best.symbol === 'AUDUSD' || rec[1]?.symbol === 'AUDUSD' && rec[1].totalR > 30);
+    Settings.set('enableEUR', best.symbol === 'EURUSD' || rec[1]?.symbol === 'EURUSD' && rec[1].totalR > 30);
+
+    // 2. Analyst toggles — keep winners, MTF + News always on (context)
+    ALL_AGENTS.forEach(name => {
+      if (name === 'MTF' || name === 'News') {
+        Settings.set('enable' + name, true);
+      } else {
+        Settings.set('enable' + name, winners.has(name));
+      }
+    });
+
+    // 3. Set min grade to A (strict)
+    Settings.set('minGrade', 'A');
+
+    // 4. Set risk to 1.5% (conservative for small account)
+    Settings.set('riskPerTrade', Math.min(2, Settings.get('riskPerTrade', 2)));
+
+    alert(`✅ Applied!\n\nNext steps:\n1. ดู Live signal — จะเปลี่ยนทันที\n2. รัน Backtest ${best.symbol} เพื่อยืนยันว่าได้ Grade A+\n3. เปิด Telegram → รอ alert`);
+
+    // Refresh journal modal to show changes
+    if (typeof Modal !== 'undefined') Modal.open('journal');
+  },
+
   /** Render recommended strategy panel */
   renderRecommend() {
     const rec = this.recommendStrategy();
@@ -1023,6 +1078,9 @@ const AgentScores = {
         <div style="font-size:6px;color:var(--gray);padding:4px 0">
           Total agents profitable: <b style="color:var(--green)">${best.winnerCount}/${best.agentCount}</b> ·
           Combined R: <b style="color:${best.totalR > 0 ? 'var(--green)' : 'var(--red)'}">${best.totalR > 0 ? '+' : ''}${best.totalR.toFixed(0)}R</b>
+        </div>
+        <div style="margin-top:6px">
+          <button class="btn btn-primary" style="border-color:var(--green);color:var(--green)" onclick="AgentScores.applyRecommended()">⚡ Apply ทันที (1 คลิก)</button>
         </div>
       </div>
 
