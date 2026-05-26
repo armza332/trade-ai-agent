@@ -2,6 +2,82 @@
    EXTRAS — Signal Grading + Telegram + Settings + Help
    ═══════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════
+   CONFLUENCE — Category-based multi-technique agreement
+   วิเคราะห์ว่าเทคนิคหลายประเภทเห็นด้วยกับสัญญาณไหม
+   เหมือนกับ trader จริงดู trend + momentum + structure + pattern พร้อมกัน
+   ═══════════════════════════════════════════════════════ */
+const Confluence = {
+  CATEGORIES: {
+    TREND:     { icon: '📈', agents: ['mtf', 'elliott'] },
+    MOMENTUM:  { icon: '⚡', agents: ['macd', 'rsi'] },
+    STRUCTURE: { icon: '🏛', agents: ['smc', 'fib', 'pivot', 'bollinger'] },
+    PATTERN:   { icon: '🕯', agents: ['pattern'] },
+    SENTIMENT: { icon: '📰', agents: ['news'] },
+  },
+
+  /** Returns breakdown of category alignment with the given signal */
+  analyze(agents, signal) {
+    if (!agents || (signal !== 'buy' && signal !== 'sell')) {
+      return { score: 0, aligned: 0, total: 0, breakdown: {}, label: '— Wait' };
+    }
+    const breakdown = {};
+    let alignedCats = 0, totalCats = 0;
+
+    for (const [cat, def] of Object.entries(this.CATEGORIES)) {
+      const live = def.agents.map(name => agents[name]).filter(Boolean);
+      if (live.length === 0) continue;
+      totalCats++;
+      const agree = live.filter(a => a.signal === signal).length;
+      const dissent = live.filter(a => a.signal === (signal === 'buy' ? 'sell' : 'buy')).length;
+      const aligned = agree > dissent && agree >= 1;
+      if (aligned) alignedCats++;
+      breakdown[cat] = {
+        icon: def.icon,
+        active: live.length,
+        agree, dissent,
+        aligned,
+      };
+    }
+
+    const score = totalCats > 0 ? alignedCats / totalCats : 0;
+    const label =
+      score >= 0.8 ? '🟢 STRONG'    :
+      score >= 0.6 ? '🟡 GOOD'      :
+      score >= 0.4 ? '🟠 PARTIAL'   :
+                     '🔴 WEAK';
+    return { score, aligned: alignedCats, total: totalCats, breakdown, label };
+  },
+
+  /** Adjust grade based on confluence — boost or demote */
+  adjustGrade(originalGrade, confluenceScore) {
+    const order = ['D', 'C', 'B', 'A', 'S+'];
+    let idx = order.indexOf(originalGrade);
+    if (idx < 0) return originalGrade;
+    if (confluenceScore >= 0.8) idx = Math.min(order.length - 1, idx + 1); // boost
+    if (confluenceScore < 0.4)  idx = Math.max(0, idx - 1);                // demote
+    return order[idx];
+  },
+
+  /** Render UI block for Commander panel */
+  render(c) {
+    if (!c || c.total === 0) return '';
+    const rows = Object.entries(c.breakdown).map(([cat, d]) => {
+      const mark = d.aligned ? '✅' : (d.dissent > d.agree ? '❌' : '⚪');
+      const cls  = d.aligned ? 'text-green' : (d.dissent > d.agree ? 'text-red' : 'text-gray');
+      return `<div class="row" style="font-size:6px">
+        <span class="lbl">${d.icon} ${cat}</span>
+        <span class="val ${cls}">${mark} ${d.agree}/${d.active}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:8px">
+      <div class="cmd-section-title" style="font-size:7px;color:var(--gold)">⚖ CONFLUENCE — ${c.label} (${c.aligned}/${c.total})</div>
+      <div class="trade-params">${rows}</div>
+    </div>`;
+  },
+};
+window.Confluence = Confluence;
+
 /* ─── Signal Grading System ─── */
 const SignalGrade = {
 
@@ -863,12 +939,64 @@ const AgentScores = {
     this.save({ agents: {}, meta: { liveTrades: 0, backtestTrades: 0, created: Date.now() } });
   },
 
+  /** Trade counts per symbol */
+  symbolCounts() {
+    const kb = this.load();
+    const result = { XAUUSD: 0, AUDUSD: 0, EURUSD: 0 };
+    Object.values(kb.agents).forEach(a => {
+      ['XAUUSD','AUDUSD','EURUSD'].forEach(sym => {
+        const b = a[`sym_${sym}`];
+        if (b) result[sym] = Math.max(result[sym], b.t);
+      });
+    });
+    return result;
+  },
+
+  /** Render progress bar for KB data quality */
+  renderProgress() {
+    const counts = this.symbolCounts();
+    const TARGET_HIGH = 100;   // high confidence
+    const TARGET_MIN  = 30;    // minimum usable
+
+    const bar = (count, target) => {
+      const pct = Math.min(100, Math.round(count / target * 100));
+      const fill = '█'.repeat(Math.floor(pct / 10));
+      const empty = '░'.repeat(10 - Math.floor(pct / 10));
+      const color = pct >= 100 ? 'var(--green)' : pct >= 30 ? 'var(--yellow)' : 'var(--gray)';
+      const status = count >= TARGET_HIGH ? '✅ ดีมาก' :
+                     count >= TARGET_MIN  ? '⚠️ พอใช้' :
+                                            '🔴 ยังน้อย';
+      return `<div style="font-size:7px;color:var(--white);font-family:monospace">
+        <span style="color:${color}">${fill}${empty}</span>
+        <span style="color:${color}"> ${count}/${target}</span>
+        <span style="color:var(--gray)"> — ${status}</span>
+      </div>`;
+    };
+
+    return `
+      <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">📊 KB DATA QUALITY</div>
+      <div style="font-size:6px;color:var(--gray);padding:4px 0">
+        เป้าหมาย: <b style="color:var(--yellow)">30</b> trades/symbol = พอใช้ |
+        <b style="color:var(--green)">100</b> trades/symbol = ดีมาก
+      </div>
+      <div style="display:grid;grid-template-columns:60px 1fr;gap:4px;align-items:center;padding:4px 0">
+        <span style="color:var(--gold)">🥇 XAU</span> ${bar(counts.XAUUSD, TARGET_HIGH)}
+        <span style="color:var(--teal)">🇦🇺 AUD</span> ${bar(counts.AUDUSD, TARGET_HIGH)}
+        <span style="color:var(--teal)">🇪🇺 EUR</span> ${bar(counts.EURUSD, TARGET_HIGH)}
+      </div>
+      ${counts.XAUUSD < TARGET_MIN || counts.AUDUSD < TARGET_MIN || counts.EURUSD < TARGET_MIN
+        ? '<div style="margin-top:4px;font-size:6px;color:var(--yellow);border-left:2px solid var(--yellow);padding-left:6px">💡 รัน Auto-Optimize อีกหน่อย — แต่ละ cycle เพิ่ม 5-15 trades/symbol</div>'
+        : ''}
+    `;
+  },
+
   /** Render UI panel for inclusion in Journal modal */
   render() {
     const s = this.stats();
     const meta = this.meta();
+    const progressHTML = this.renderProgress();
     if (s.length === 0) {
-      return '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูล — รัน Backtest หรือบันทึก W/L ใน Journal (min ' + this.MIN_TRADES + ' trades/bucket)</div>';
+      return progressHTML + '<div style="padding:10px;font-size:7px;color:var(--gray);text-align:center">📭 ยังไม่มีข้อมูล — รัน Backtest หรือบันทึก W/L ใน Journal (min ' + this.MIN_TRADES + ' trades/bucket)</div>';
     }
 
     const cell = (b, fallback = '—') => {
@@ -895,6 +1023,7 @@ const AgentScores = {
     }).join('');
 
     return `
+      ${progressHTML}
       <div style="margin-top:14px;font-size:8px;color:var(--gold);border-bottom:1px solid var(--border);padding-bottom:4px">🧠 KNOWLEDGE BASE — Regime-Aware Learning</div>
       <div style="font-size:6px;color:var(--gray);padding:4px 0">
         Live trades: <b style="color:var(--green)">${meta.liveTrades || 0}</b> |

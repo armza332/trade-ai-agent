@@ -102,6 +102,22 @@ const TradingWarRoom = {
 
     // Grade the signal
     const gradeInfo = SignalGrade.grade(cmdR, goldR, fxR);
+
+    // Confluence — check multi-category agreement (trend+momentum+structure+pattern)
+    // ใช้ agents ของทีมที่ "นำ" (สัญญาณหลัก)
+    const leadAgents = cmdR.sym === 'XAUUSD'
+      ? goldR.agents
+      : (cmdR.sym === 'AUDUSD' ? fxR.aud?.agents : fxR.eur?.agents);
+    const confluence = Confluence.analyze(leadAgents, cmdR.signal);
+    gradeInfo.confluence = confluence;
+    // Adjust grade based on confluence
+    if (cmdR.signal === 'buy' || cmdR.signal === 'sell') {
+      gradeInfo.grade = Confluence.adjustGrade(gradeInfo.grade, confluence.score);
+      // Recompute alert flag (A/S+ trigger banner)
+      gradeInfo.alert = (gradeInfo.grade === 'A' || gradeInfo.grade === 'S+');
+      gradeInfo.sound = gradeInfo.alert;
+    }
+
     cmdR.gradeInfo = gradeInfo;
 
     // Snapshot ALL agent votes for journal tracking (Phase 2 — adaptive learning data)

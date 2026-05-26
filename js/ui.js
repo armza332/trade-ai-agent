@@ -279,6 +279,10 @@ const UI = {
       ? `<div style="text-align:center;margin-bottom:8px">${SignalGrade.renderGradeBadge(report.gradeInfo)}</div>`
       : '';
 
+    const confluenceHTML = (report.gradeInfo?.confluence && typeof Confluence !== 'undefined')
+      ? Confluence.render(report.gradeInfo.confluence)
+      : '';
+
     el.innerHTML = `<div class="cmd-body">
       <!-- Signal section -->
       <div class="cmd-section">
@@ -297,6 +301,7 @@ const UI = {
           <div class="row"><span class="lbl">Position</span><span class="val">${report.pos} of balance</span></div>
           <div class="row"><span class="lbl">Mode</span><span class="val info">${report.mode ?? 'Swing 🌊'}</span></div>
         </div>
+        ${confluenceHTML}
       </div>
 
       <!-- Votes section -->
