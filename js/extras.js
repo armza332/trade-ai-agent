@@ -502,6 +502,10 @@ const Modal = {
     if (name === 'backtest' && typeof Backtest !== 'undefined') {
       document.getElementById('backtest-body').innerHTML = Backtest.renderUI();
     }
+    if (name === 'botstatus' && typeof BotBridge !== 'undefined') {
+      BotBridge.tick();   // fetch immediately when opened
+      if (!BotBridge.timer) BotBridge.start();
+    }
   },
   close() {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -534,6 +538,7 @@ const Modal = {
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
     const mw = document.getElementById('s-minweight'); if (mw) mw.value = Settings.get('minAgentWeight', 0.5);
+    const bb = document.getElementById('s-botbridge'); if (bb) bb.value = Settings.get('botBridgeURL', '');
   },
 
   saveSettings() {
@@ -568,6 +573,10 @@ const Modal = {
       if (el) Settings.set('enable' + name, el.checked);
     });
     const mw = document.getElementById('s-minweight'); if (mw) Settings.set('minAgentWeight', parseFloat(mw.value) || 0.5);
+    const bb = document.getElementById('s-botbridge'); if (bb) {
+      Settings.set('botBridgeURL', bb.value.trim());
+      if (typeof BotBridge !== 'undefined' && bb.value.trim().length > 20) BotBridge.start();
+    }
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -1553,6 +1562,100 @@ const AdaptiveStrategy = {
   },
 };
 window.AdaptiveStrategy = AdaptiveStrategy;
+
+/* ═══════════════════════════════════════════════════════
+   BOT BRIDGE — Read status from MT5 EA via Apps Script
+   ═══════════════════════════════════════════════════════ */
+const BotBridge = {
+  POLL_SEC: 30,
+  timer: null,
+  lastStatus: null,
+
+  start() {
+    this.stop();
+    this.tick();
+    this.timer = setInterval(() => this.tick(), this.POLL_SEC * 1000);
+  },
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  async tick() {
+    const url = Settings.get('botBridgeURL', '');
+    if (!url || url.length < 20) return;
+    try {
+      const r = await fetch(url + '?action=status&t=' + Date.now());
+      const data = await r.json();
+      if (data.ok && data.status) {
+        this.lastStatus = data.status;
+        this.render();
+      }
+    } catch (e) { /* silent */ }
+  },
+
+  render() {
+    const el = document.getElementById('bot-status-body');
+    if (!el || !this.lastStatus) return;
+    const s = this.lastStatus;
+    const onlineColor = s.online ? 'var(--green)' : 'var(--red)';
+    const onlineText  = s.online ? '🟢 ONLINE' : '🔴 OFFLINE (' + s.ageSec + 's ago)';
+
+    const positions = (s.positions || []).map(p => {
+      const sideEm = p.side === 'buy' ? '▲' : '▼';
+      const profCls = p.profit > 0 ? 'text-green' : p.profit < 0 ? 'text-red' : 'text-gray';
+      return `<tr>
+        <td class="text-teal">${p.sym}</td>
+        <td class="${p.side === 'buy' ? 'text-green' : 'text-red'}">${sideEm} ${p.side.toUpperCase()}</td>
+        <td>${p.vol}</td>
+        <td>${p.open}</td>
+        <td class="text-red">${p.sl}</td>
+        <td class="text-green">${p.tp}</td>
+        <td class="${profCls}">$${p.profit.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+    const posRows = positions || '<tr><td colspan="7" style="text-align:center;color:var(--gray);padding:8px">No open positions</td></tr>';
+
+    const pnlCls = s.todayPnL > 0 ? 'text-green' : s.todayPnL < 0 ? 'text-red' : 'text-gray';
+
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--border)">
+        <div style="background:var(--bg-card);padding:8px;text-align:center">
+          <div style="font-size:6px;color:var(--gray)">Status</div>
+          <div style="font-size:8px;color:${onlineColor};margin-top:3px">${onlineText}</div>
+        </div>
+        <div style="background:var(--bg-card);padding:8px;text-align:center">
+          <div style="font-size:6px;color:var(--gray)">Balance</div>
+          <div style="font-size:11px;color:var(--teal);margin-top:3px">$${s.balance.toFixed(2)}</div>
+        </div>
+        <div style="background:var(--bg-card);padding:8px;text-align:center">
+          <div style="font-size:6px;color:var(--gray)">Equity</div>
+          <div style="font-size:11px;color:var(--white);margin-top:3px">$${s.equity.toFixed(2)}</div>
+        </div>
+        <div style="background:var(--bg-card);padding:8px;text-align:center">
+          <div style="font-size:6px;color:var(--gray)">Today P/L</div>
+          <div style="font-size:11px;margin-top:3px" class="${pnlCls}">$${s.todayPnL > 0 ? '+' : ''}${s.todayPnL.toFixed(2)}</div>
+        </div>
+        <div style="background:var(--bg-card);padding:8px;text-align:center">
+          <div style="font-size:6px;color:var(--gray)">W/L Today</div>
+          <div style="font-size:11px;color:var(--gold);margin-top:3px">${s.todayWins}/${s.todayLosses}</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:7px;color:var(--gold)">📊 Open Positions</div>
+      <div class="j-table-wrap" style="max-height:140px">
+        <table class="j-table" style="font-size:6px">
+          <thead><tr><th>Symbol</th><th>Side</th><th>Vol</th><th>Open</th><th>SL</th><th>TP</th><th>Profit</th></tr></thead>
+          <tbody>${posRows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:4px;font-size:6px;color:var(--gray)">
+        Symbols: ${(s.symbols || []).join(', ')} · Updated ${s.ageSec}s ago
+      </div>
+    `;
+  },
+};
+window.BotBridge = BotBridge;
 
 /* ═══════════════════════════════════════════════════════
    TOP-DOWN ANALYZER — เทรดเดอร์ตัวจริงคิดยังไง

@@ -55,6 +55,12 @@ const TradingWarRoom = {
     // Upcoming news warning — ตรวจทุก 30 นาที ส่งเตือนถ้ามีข่าว high ใน 1 ชม.
     this._upcomingNewsCheck();
     setInterval(() => this._upcomingNewsCheck(), 30 * 60 * 1000);
+    // MT5 Bot Bridge — start polling if URL configured
+    if (typeof BotBridge !== 'undefined' && Settings.get('botBridgeURL', '').length > 20) {
+      BotBridge.start();
+      this._log('CMD', 'BotBridge', '🤖 MT5 Bot Bridge polling enabled.');
+    }
+
     this._log('CMD', 'Commander', '🟢 Trading War Room initialized. All agents ONLINE.');
     this._log('GOLD', 'Maj.Gold', '⚡ GOLD TEAM ready — monitoring XAUUSD.');
     this._log('FX', 'Maj.FX', '💱 CURRENCY TEAM ready — monitoring AUDUSD & EURUSD.');

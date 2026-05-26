@@ -72,6 +72,7 @@
   <div class="header-right">
     <button class="hdr-btn" onclick="Modal.open('backtest')" data-i18n="btn.backtest" data-i18n-title="bt.title">🔬 BACKTEST</button>
     <button class="hdr-btn" onclick="Modal.open('journal')" data-i18n="btn.journal">📓 JOURNAL</button>
+    <button class="hdr-btn" onclick="Modal.open('botstatus')" title="MT5 Bot Status">🤖 BOT</button>
     <button class="hdr-btn" onclick="Modal.open('help')" data-i18n="btn.help">❓ HELP</button>
     <button class="hdr-btn" onclick="Modal.open('settings')" data-i18n="btn.settings">⚙ SETTINGS</button>
     <button class="hdr-btn" id="lang-toggle" onclick="I18n.toggle()" title="Toggle TH/EN">🇹🇭 TH</button>
@@ -329,6 +330,20 @@
         <button class="btn btn-secondary" onclick="Modal.testPriceFeed()">🧪 ทดสอบดึงราคา</button>
       </div>
 
+      <div class="px-divider"></div>
+      <div style="font-size:8px;color:var(--gold);margin:10px 0 6px">🤖 MT5 BOT BRIDGE (เชื่อม EA → เว็บ)</div>
+      <div class="form-group">
+        <label class="form-label">🔗 Bot Bridge URL <span class="hint">(Apps Script /exec URL)</span></label>
+        <input id="s-botbridge" type="text" class="form-input" placeholder="https://script.google.com/macros/s/.../exec" spellcheck="false">
+      </div>
+      <div style="font-size:6px;color:var(--gray);line-height:1.6;padding:0 4px 8px">
+        <b style="color:var(--gold)">📘 วิธีตั้ง:</b><br>
+        1. เปิด <a href="https://script.google.com" target="_blank" style="color:var(--teal)">script.google.com</a> → New project<br>
+        2. Copy โค้ดจาก <code>mt5/BridgeCode.gs</code> ไปวาง<br>
+        3. Deploy → New deployment → Web app (Execute as: Me, Access: Anyone)<br>
+        4. Copy URL ลงทั้ง EA Input และช่องนี้
+      </div>
+
       <div class="help-box">
         <div style="font-size:7px;color:var(--gold);margin-bottom:4px">📘 วิธีตั้ง Telegram Bot:</div>
         <ol style="font-size:6px;color:var(--white);line-height:1.8;padding-left:14px">
@@ -440,6 +455,35 @@
         <div class="help-text">ระบบนี้เป็น <b>AI analysis tool</b> — ใช้ประกอบการตัดสินใจ ไม่ใช่ financial advice. ตลาดมีความเสี่ยง คุณต้องจัดการ risk ของตัวเอง ทดสอบใน demo account ก่อน</div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ BOT STATUS MODAL ═══════════════════ -->
+<div id="modal-botstatus" class="modal" style="display:none">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">🤖 MT5 BOT STATUS — Live from EA</div>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="bot-status-body">
+        <div style="padding:20px;text-align:center;font-size:7px;color:var(--gray)">
+          ⏳ Waiting for data from MT5 EA...<br><br>
+          ถ้าไม่เห็นข้อมูล: ตรวจ <b>SETTINGS → Bot Bridge URL</b> และดูว่า EA ออนไลน์อยู่
+        </div>
+      </div>
+      <div class="help-box" style="margin-top:12px">
+        <div style="font-size:7px;color:var(--gold);margin-bottom:4px">📘 วิธี Setup ครั้งแรก:</div>
+        <ol style="font-size:6px;color:var(--white);line-height:1.8;padding-left:14px">
+          <li>เปิด <a href="https://script.google.com" target="_blank" style="color:var(--teal)">script.google.com</a> → New project</li>
+          <li>Copy <code>mt5/BridgeCode.gs</code> → Paste → Save</li>
+          <li>Deploy → New deployment → Web app (Execute: Me, Access: Anyone) → Authorize</li>
+          <li>Copy <b>/exec URL</b> → Paste ลง EA Input <code>WebhookURL</code> และ SETTINGS → Bot Bridge URL</li>
+          <li>MT5 → Tools → Options → Expert Advisors → ✅ Allow WebRequest + add <code>https://script.google.com</code> และ <code>https://script.googleusercontent.com</code></li>
+          <li>Restart EA → ข้อมูลจะมาทุก 60 วินาที</li>
+        </ol>
+      </div>
     </div>
   </div>
 </div>

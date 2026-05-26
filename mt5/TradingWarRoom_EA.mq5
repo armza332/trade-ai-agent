@@ -48,14 +48,23 @@ input group "=== SYSTEM ==="
 input int     MagicNumber        = 992511;
 input bool    EnableAlerts       = true;
 input bool    EnableNotify       = false;         // Push notifications
+input bool    ShowDashboard      = true;          // On-chart status panel
+
+input group "=== WEB BRIDGE (Optional) ==="
+input string  WebhookURL         = "";            // Apps Script URL (paste after deploy)
+input string  WebhookSecret      = "twr-secret";  // Match Apps Script secret
+input int     WebPushSec         = 60;            // Push status every N seconds
 
 //═══════════════════ GLOBALS ════════════════════════════════════════
 CTrade        trade;
 CPositionInfo posInfo;
 
 datetime      lastSignalTime[2];
+datetime      lastWebPush = 0;
 int           rsiHandle[2], bbHandle[2], atrHandle[2];
 string        symbols[2];
+int           tradesToday_W = 0, tradesToday_L = 0;
+double        pnlToday      = 0;
 
 //═══════════════════ ON INIT ════════════════════════════════════════
 int OnInit() {
@@ -112,15 +121,21 @@ void OnDeinit(const int reason) {
 
 //═══════════════════ ON TICK ════════════════════════════════════════
 void OnTick() {
-   // Only run on new bar to save CPU
+   // Update dashboard + web push (every tick is OK, they have internal throttle)
+   if (ShowDashboard) UpdateDashboard();
+   PushToWeb();
+
+   // Only run signal check on new bar to save CPU
    static datetime lastBar = 0;
    datetime curBar = iTime(Symbol1, Timeframe, 0);
    if (curBar == lastBar) {
-      // Still manage open positions every tick
       ManagePositions();
       return;
    }
    lastBar = curBar;
+
+   // Update today's stats (after each new bar)
+   UpdateTodayStats();
 
    // Session filter
    if (OnlyLondonNY && !IsLondonNYSession()) return;
@@ -281,9 +296,135 @@ bool IsLondonNYSession() {
    MqlDateTime t;
    TimeCurrent(t);
    int h = t.hour;
-   // Server time is usually broker server time; many brokers use GMT+2 or +3
-   // For Exness Demo (server typically GMT+0-3) — adjust if needed
    // London 8-12 UTC, NY 13-17 UTC → broker H = UTC + offset
-   // Default: assume broker = UTC, so 8-17
    return (h >= 8 && h < 17);
+}
+
+//═══════════════════ TODAY STATS ════════════════════════════════════
+datetime StartOfDay() {
+   MqlDateTime t;
+   TimeCurrent(t);
+   t.hour = 0; t.min = 0; t.sec = 0;
+   return StructToTime(t);
+}
+
+void UpdateTodayStats() {
+   tradesToday_W = 0; tradesToday_L = 0; pnlToday = 0;
+   if (!HistorySelect(StartOfDay(), TimeCurrent())) return;
+   int n = HistoryDealsTotal();
+   for (int i = 0; i < n; i++) {
+      ulong t = HistoryDealGetTicket(i);
+      if (HistoryDealGetInteger(t, DEAL_MAGIC) != MagicNumber) continue;
+      if (HistoryDealGetInteger(t, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+      double profit = HistoryDealGetDouble(t, DEAL_PROFIT)
+                    + HistoryDealGetDouble(t, DEAL_SWAP)
+                    + HistoryDealGetDouble(t, DEAL_COMMISSION);
+      if (profit > 0)      tradesToday_W++;
+      else if (profit < 0) tradesToday_L++;
+      pnlToday += profit;
+   }
+}
+
+//═══════════════════ ON-CHART DASHBOARD ═════════════════════════════
+void UpdateDashboard() {
+   string p = "";
+   p += "╔═════════════════════════════╗\n";
+   p += "║  🤖 TRADING WAR ROOM v1.0    ║\n";
+   p += "╚═════════════════════════════╝\n";
+   p += StringFormat("⏰ %s  | Server time\n",
+        TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES));
+   p += "─────────────────────────────\n";
+   p += StringFormat("💰 Balance:  $%.2f\n", AccountInfoDouble(ACCOUNT_BALANCE));
+   p += StringFormat("📊 Equity:   $%.2f\n", AccountInfoDouble(ACCOUNT_EQUITY));
+   p += StringFormat("💵 Today P/L: $%+.2f  (%dW/%dL)\n", pnlToday, tradesToday_W, tradesToday_L);
+   p += "─────────────────────────────\n";
+
+   int nSyms = EnableSymbol2 ? 2 : 1;
+   for (int i = 0; i < nSyms; i++) {
+      double rsi[]; ArraySetAsSeries(rsi, true);
+      double bbU[], bbL[]; ArraySetAsSeries(bbU, true); ArraySetAsSeries(bbL, true);
+      bool ok = (CopyBuffer(rsiHandle[i], 0, 0, 2, rsi) == 2) &&
+                (CopyBuffer(bbHandle[i], 1, 0, 2, bbU) == 2) &&
+                (CopyBuffer(bbHandle[i], 2, 0, 2, bbL) == 2);
+      if (!ok) continue;
+
+      double bid = SymbolInfoDouble(symbols[i], SYMBOL_BID);
+      double mid = bid;
+      string sigEmoji = "⚪";
+      string sigText  = "WAIT";
+      if (rsi[0] < RSIOversold && mid <= bbL[0] * 1.001)      { sigEmoji = "🟢"; sigText = "BUY watch"; }
+      else if (rsi[0] > RSIOverbought && mid >= bbU[0] * 0.999) { sigEmoji = "🔴"; sigText = "SELL watch"; }
+
+      int posCnt = CountPositions(symbols[i]);
+      p += StringFormat("💎 %s   %s %s\n", symbols[i], sigEmoji, sigText);
+      p += StringFormat("   RSI %.1f  | Pos: %d\n", rsi[0], posCnt);
+   }
+
+   p += "─────────────────────────────\n";
+   string sessionTxt = IsLondonNYSession() ? "🟢 London/NY ACTIVE" : "🟡 Asia / Off-hours";
+   p += sessionTxt + "\n";
+   if (StringLen(WebhookURL) > 10) {
+      p += StringFormat("🌐 Web sync: ON (every %ds)\n", WebPushSec);
+   }
+   p += "═════════════════════════════";
+
+   Comment(p);
+}
+
+//═══════════════════ WEB BRIDGE ═════════════════════════════════════
+void PushToWeb() {
+   if (StringLen(WebhookURL) < 10) return;
+   if (TimeCurrent() - lastWebPush < WebPushSec) return;
+   lastWebPush = TimeCurrent();
+
+   // Build JSON status payload
+   string posJson = "";
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      if (!posInfo.SelectByIndex(i)) continue;
+      if (posInfo.Magic() != MagicNumber) continue;
+      if (StringLen(posJson) > 0) posJson += ",";
+      posJson += StringFormat(
+         "{\"sym\":\"%s\",\"side\":\"%s\",\"vol\":%.2f,\"open\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"profit\":%.2f}",
+         posInfo.Symbol(),
+         posInfo.PositionType() == POSITION_TYPE_BUY ? "buy" : "sell",
+         posInfo.Volume(),
+         posInfo.PriceOpen(),
+         posInfo.StopLoss(),
+         posInfo.TakeProfit(),
+         posInfo.Profit() + posInfo.Swap() + posInfo.Commission()
+      );
+   }
+
+   string json = StringFormat(
+      "{\"type\":\"status\",\"secret\":\"%s\",\"ts\":%d,"
+      "\"balance\":%.2f,\"equity\":%.2f,\"freeMargin\":%.2f,"
+      "\"todayWins\":%d,\"todayLosses\":%d,\"todayPnL\":%.2f,"
+      "\"symbols\":[\"%s\",\"%s\"],"
+      "\"positions\":[%s]}",
+      WebhookSecret, (int)TimeCurrent(),
+      AccountInfoDouble(ACCOUNT_BALANCE),
+      AccountInfoDouble(ACCOUNT_EQUITY),
+      AccountInfoDouble(ACCOUNT_MARGIN_FREE),
+      tradesToday_W, tradesToday_L, pnlToday,
+      Symbol1, Symbol2,
+      posJson
+   );
+
+   char post[]; StringToCharArray(json, post, 0, StringLen(json));
+   char result[]; string headers;
+   ResetLastError();
+   int code = WebRequest("POST", WebhookURL,
+                          "Content-Type: application/json\r\n",
+                          5000, post, result, headers);
+   if (code != 200) {
+      int err = GetLastError();
+      if (err == 4014) {
+         // URL not in allowed list — silently disable to avoid log spam
+         static bool warned = false;
+         if (!warned) {
+            Print("⚠️ WebRequest blocked — add ", WebhookURL, " to Tools → Options → Expert Advisors → WebRequest allowed URLs");
+            warned = true;
+         }
+      }
+   }
 }
