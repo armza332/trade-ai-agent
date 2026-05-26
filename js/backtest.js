@@ -467,6 +467,16 @@ const AutoOptimize = {
 
     try {
       while (this.running && this.cycles < maxCycles) {
+        // Daily quota guard
+        if (typeof RateLimiter !== 'undefined' && !RateLimiter.quotaOK()) {
+          this._addLog('⛔ Daily quota ≥90% — auto-stopping Auto-Opt');
+          if (Settings.get('telegramOn')) {
+            await Telegram._send(`⛔ <b>Auto-Opt Stopped</b>\nDaily API quota ${RateLimiter.dailyUsed()}/${RateLimiter.DAILY_LIMIT} (>90%)\nResume tomorrow (midnight UTC).`);
+          }
+          this.running = false;
+          break;
+        }
+
         const cycleStart = Date.now();
         this.cycles++;
         this._addLog(`▶ Cycle ${this.cycles}/${maxCycles}`);

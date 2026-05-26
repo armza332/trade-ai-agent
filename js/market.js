@@ -2,12 +2,51 @@
    MARKET ENGINE - Price simulation + Technical Analysis
    ═══════════════════════════════════════════════════════ */
 
-/* ─── Persistent Rate Limiter (Twelve Data: 8/min free plan) ──
-   เก็บ timestamp ของ call ใน localStorage → ข้าม tab/reload ได้
-   maxPerMin = 5 (safety margin จากลิมิตจริง 8) */
+/* ─── Persistent Rate Limiter + Daily Quota Guard ──
+   - Per-minute: 5/min (safety margin from 8/min limit)
+   - Per-day: track usage, auto-pause at 90% */
 const RateLimiter = {
   KEY: 'twr_rate_calls',
+  DAILY_KEY: 'twr_daily_calls',
+  DAILY_LIMIT: 800,  // Twelve Data free plan
+  PAUSE_AT_PCT: 90,  // หยุดอัตโนมัติเมื่อใช้ 90%
   maxPerMin: 5,
+
+  /** เพิ่ม daily counter — reset ที่ midnight UTC */
+  _trackDaily() {
+    const today = new Date().toISOString().slice(0, 10);
+    let data = { date: today, count: 0 };
+    try {
+      const raw = localStorage.getItem(this.DAILY_KEY);
+      if (raw) data = JSON.parse(raw);
+      if (data.date !== today) data = { date: today, count: 0 };
+    } catch {}
+    data.count++;
+    localStorage.setItem(this.DAILY_KEY, JSON.stringify(data));
+    return data.count;
+  },
+
+  dailyUsed() {
+    try {
+      const raw = localStorage.getItem(this.DAILY_KEY);
+      if (!raw) return 0;
+      const data = JSON.parse(raw);
+      const today = new Date().toISOString().slice(0, 10);
+      if (data.date !== today) return 0;
+      return data.count || 0;
+    } catch { return 0; }
+  },
+
+  /** ห้ามยิงถ้าใกล้หมด — auto-pause */
+  quotaOK() {
+    const used = this.dailyUsed();
+    const pct = used / this.DAILY_LIMIT * 100;
+    if (pct >= this.PAUSE_AT_PCT) {
+      console.warn(`⛔ Daily quota ${pct.toFixed(0)}% used (${used}/${this.DAILY_LIMIT}) — pausing API calls`);
+      return false;
+    }
+    return true;
+  },
 
   _load() {
     try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }
@@ -18,6 +57,10 @@ const RateLimiter = {
   },
 
   async wait() {
+    // Daily quota check first
+    if (!this.quotaOK()) {
+      throw new Error('QUOTA_EXCEEDED');
+    }
     const now = Date.now();
     let calls = this._load().filter(t => now - t < 60000);
     if (calls.length >= this.maxPerMin) {
@@ -28,6 +71,7 @@ const RateLimiter = {
     }
     calls.push(Date.now());
     this._save(calls);
+    this._trackDaily();
   },
 
   status() {

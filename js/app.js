@@ -81,12 +81,16 @@ const TradingWarRoom = {
     if (audEl) audEl.querySelector('.val').textContent = prices.AUDUSD.toFixed(4);
     if (eurEl) eurEl.querySelector('.val').textContent = prices.EURUSD.toFixed(4);
 
-    // Update API rate indicator
+    // Update API rate indicator (show both minute + daily)
     const rateEl = document.getElementById('api-rate');
     if (rateEl && typeof RateLimiter !== 'undefined') {
       const s = RateLimiter.status();
-      rateEl.textContent = `API: ${s.recent}/${s.max}`;
-      rateEl.style.color = s.recent >= s.max ? 'var(--red)' : s.recent >= s.max - 2 ? 'var(--yellow)' : 'var(--gray)';
+      const daily = RateLimiter.dailyUsed();
+      const dailyPct = (daily / RateLimiter.DAILY_LIMIT * 100).toFixed(0);
+      rateEl.innerHTML = `API: ${s.recent}/${s.max} · ${daily}/${RateLimiter.DAILY_LIMIT} (${dailyPct}%)`;
+      const dailyOver = dailyPct >= 90;
+      const minuteHigh = s.recent >= s.max;
+      rateEl.style.color = dailyOver ? 'var(--red)' : minuteHigh ? 'var(--yellow)' : daily > 500 ? 'var(--orange)' : 'var(--gray)';
     }
   },
 

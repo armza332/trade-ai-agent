@@ -982,39 +982,60 @@ const AgentScores = {
       return;
     }
 
-    const best = rec[0];
-    const losers = rec.filter(s => s.totalR < 0).map(s => s.symbol);
-
-    // ALL agent types from any symbol
     const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'];
 
-    // For each agent type, check if ANY symbol has it profitable (>30R)
+    // 1. Profitable symbols = enable all with totalR > 0 AND winnerCount >= 2
+    const profitableSyms = rec.filter(s => s.totalR > 30 && s.winnerCount >= 2);
+    const enabledSyms = profitableSyms.map(s => s.symbol);
+
+    // 2. Winning agents = any agent that wins on AT LEAST one profitable symbol
     const winners = new Set();
-    rec.forEach(s => s.topAgents.forEach(a => winners.add(a.shortName)));
+    profitableSyms.forEach(s => s.topAgents.forEach(a => winners.add(a.shortName)));
+
+    // 3. List "universal losers" — agents that lose on EVERY symbol (no symbol wins with them)
+    const universalLosers = [];
+    ALL_AGENTS.forEach(name => {
+      if (winners.has(name) || name === 'MTF' || name === 'News') return;
+      // Check if this agent loses on every symbol that has it
+      const hasProfit = rec.some(s => {
+        const agent = [...s.topAgents, ...s.worstAgents, ...(s.agentCount > 0 ? [] : [])]
+          .find(a => a.shortName === name);
+        return agent && agent.R > 0;
+      });
+      if (!hasProfit) universalLosers.push(name);
+    });
 
     // Build summary
-    let report = `🎯 จะ apply config นี้:\n\n`;
-    report += `📌 Symbol Filter: เปิดเฉพาะ ${best.symbol}\n`;
-    if (rec[1]?.totalR > 30) report += `   + ${rec[1].symbol} (รองมา)\n`;
-    report += `\n✅ เปิด analysts: ${[...winners].join(', ')}\n`;
-    const disabled = ALL_AGENTS.filter(a => !winners.has(a) && a !== 'MTF' && a !== 'News');
-    if (disabled.length > 0) report += `❌ ปิด analysts: ${disabled.join(', ')}\n`;
+    let report = `🎯 Smart Apply:\n\n`;
+    report += `📌 Symbol Filter: เปิด ${enabledSyms.join(' + ')}\n`;
+    if (enabledSyms.length < 3) {
+      const skipped = ['XAUUSD','AUDUSD','EURUSD'].filter(s => !enabledSyms.includes(s));
+      report += `   ⏸ Skip: ${skipped.join(', ')} (ยังไม่มี edge พอ)\n`;
+    }
+    report += `\n✅ เปิด analysts (winners ทุก symbol รวมกัน):\n   ${[...winners].join(', ')}\n`;
+    if (universalLosers.length > 0) {
+      report += `\n❌ ปิด analysts (แพ้ทุก symbol):\n   ${universalLosers.join(', ')}\n`;
+    }
+    report += `\n💡 ระบบจะใช้ KB filter ต่อ — agent ที่ห่วยเฉพาะ symbol จะถูก skip อัตโนมัติ\n`;
     report += `\nดำเนินการต่อ?`;
 
     if (!confirm(report)) return;
 
-    // 1. Symbol filter — enable best + good runner-up
-    Settings.set('enableXAU', best.symbol === 'XAUUSD' || rec[1]?.symbol === 'XAUUSD' && rec[1].totalR > 30);
-    Settings.set('enableAUD', best.symbol === 'AUDUSD' || rec[1]?.symbol === 'AUDUSD' && rec[1].totalR > 30);
-    Settings.set('enableEUR', best.symbol === 'EURUSD' || rec[1]?.symbol === 'EURUSD' && rec[1].totalR > 30);
+    // 1. Symbol filter — enable profitable symbols
+    Settings.set('enableXAU', enabledSyms.includes('XAUUSD'));
+    Settings.set('enableAUD', enabledSyms.includes('AUDUSD'));
+    Settings.set('enableEUR', enabledSyms.includes('EURUSD'));
 
-    // 2. Analyst toggles — keep winners, MTF + News always on (context)
+    // 2. Analyst toggles — keep winners + MTF/News, disable universal losers
     ALL_AGENTS.forEach(name => {
       if (name === 'MTF' || name === 'News') {
         Settings.set('enable' + name, true);
-      } else {
-        Settings.set('enable' + name, winners.has(name));
+      } else if (winners.has(name)) {
+        Settings.set('enable' + name, true);
+      } else if (universalLosers.includes(name)) {
+        Settings.set('enable' + name, false);
       }
+      // Otherwise: leave as-is (agent มี mixed performance)
     });
 
     // 3. Set min grade to A (strict)
@@ -1023,9 +1044,7 @@ const AgentScores = {
     // 4. Set risk to 1.5% (conservative for small account)
     Settings.set('riskPerTrade', Math.min(2, Settings.get('riskPerTrade', 2)));
 
-    alert(`✅ Applied!\n\nNext steps:\n1. ดู Live signal — จะเปลี่ยนทันที\n2. รัน Backtest ${best.symbol} เพื่อยืนยันว่าได้ Grade A+\n3. เปิด Telegram → รอ alert`);
-
-    // Refresh journal modal to show changes
+    alert(`✅ Smart Apply Done!\n\nSymbols เปิด: ${enabledSyms.join(', ')}\nWinners agents: ${[...winners].join(', ')}\n\nระบบใช้ KB-weighting → แต่ละ symbol จะใช้แค่ agent ที่เก่งสำหรับ symbol นั้นเอง`);
     if (typeof Modal !== 'undefined') Modal.open('journal');
   },
 
