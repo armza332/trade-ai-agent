@@ -505,6 +505,127 @@ class PatternAgent extends BaseAgent {
 }
 
 /* ═══════════════════════════════════════════════════════
+   DIVERGENCE ANALYST — RSI + MACD divergence (จุดกลับตัว)
+   จับ regular + hidden divergence
+     - Bull div: ราคาทำ lower low แต่ indicator higher low → กลับขึ้น
+     - Bear div: ราคาทำ higher high แต่ indicator lower high → กลับลง
+   ═══════════════════════════════════════════════════════ */
+class DivergenceAgent extends BaseAgent {
+  constructor(team) {
+    super('Divergence', 'Reversal Point Detection', '🔄', team);
+  }
+
+  _findExtremes(arr, lookback = 20) {
+    const slice = arr.slice(-lookback);
+    let maxIdx = 0, minIdx = 0;
+    for (let i = 1; i < slice.length; i++) {
+      if (slice[i] > slice[maxIdx]) maxIdx = i;
+      if (slice[i] < slice[minIdx]) minIdx = i;
+    }
+    return { maxIdx, minIdx, max: slice[maxIdx], min: slice[minIdx] };
+  }
+
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (candles.length < 50) return { signal: 'wait', conf: 30, report: { note: 'Need ≥50 bars' }, log: 'Insufficient' };
+
+    const closes = candles.map(c => c.close);
+    const highs  = candles.map(c => c.high);
+    const lows   = candles.map(c => c.low);
+
+    // Compute RSI series
+    const rsiSeries = [];
+    for (let i = 14; i < closes.length; i++) {
+      rsiSeries.push(TA.rsi(closes.slice(0, i + 1), 14));
+    }
+
+    // Compute MACD histogram series
+    const ema12 = TA.ema(closes, 12);
+    const ema26 = TA.ema(closes, 26);
+    const macd  = ema12.map((v, i) => v - ema26[i]);
+    const sig   = TA.ema(macd, 9);
+    const hist  = macd.map((v, i) => v - sig[i]);
+
+    // Look at last 20 bars for divergence
+    const lb = 20;
+    const recentHighs = highs.slice(-lb);
+    const recentLows  = lows.slice(-lb);
+    const recentRsi   = rsiSeries.slice(-lb);
+    const recentHist  = hist.slice(-lb);
+
+    if (recentRsi.length < lb || recentHist.length < lb) {
+      return { signal: 'wait', conf: 30, report: { note: 'Insufficient indicator data' }, log: 'No data' };
+    }
+
+    // Split into two halves to compare highs/lows
+    const half = Math.floor(lb / 2);
+    const firstHalf  = { highs: recentHighs.slice(0, half), lows: recentLows.slice(0, half),
+                          rsi: recentRsi.slice(0, half), hist: recentHist.slice(0, half) };
+    const secondHalf = { highs: recentHighs.slice(half),  lows: recentLows.slice(half),
+                          rsi: recentRsi.slice(half),  hist: recentHist.slice(half) };
+
+    const fhMaxPrice = Math.max(...firstHalf.highs);
+    const shMaxPrice = Math.max(...secondHalf.highs);
+    const fhMinPrice = Math.min(...firstHalf.lows);
+    const shMinPrice = Math.min(...secondHalf.lows);
+    const fhMaxRsi   = Math.max(...firstHalf.rsi);
+    const shMaxRsi   = Math.max(...secondHalf.rsi);
+    const fhMinRsi   = Math.min(...firstHalf.rsi);
+    const shMinRsi   = Math.min(...secondHalf.rsi);
+    const fhMaxHist  = Math.max(...firstHalf.hist);
+    const shMaxHist  = Math.max(...secondHalf.hist);
+    const fhMinHist  = Math.min(...firstHalf.hist);
+    const shMinHist  = Math.min(...secondHalf.hist);
+
+    let score = 0;
+    let signals = [];
+
+    // Bullish divergence (regular): price lower low + RSI/MACD higher low → reversal up
+    if (shMinPrice < fhMinPrice * 0.998 && shMinRsi > fhMinRsi + 2) {
+      score += 25;
+      signals.push('🟢 Bull RSI Div');
+    }
+    if (shMinPrice < fhMinPrice * 0.998 && shMinHist > fhMinHist + 0.01) {
+      score += 20;
+      signals.push('🟢 Bull MACD Div');
+    }
+
+    // Bearish divergence (regular): price higher high + RSI/MACD lower high → reversal down
+    if (shMaxPrice > fhMaxPrice * 1.002 && shMaxRsi < fhMaxRsi - 2) {
+      score -= 25;
+      signals.push('🔴 Bear RSI Div');
+    }
+    if (shMaxPrice > fhMaxPrice * 1.002 && shMaxHist < fhMaxHist - 0.01) {
+      score -= 20;
+      signals.push('🔴 Bear MACD Div');
+    }
+
+    // Hidden divergence (trend continuation)
+    // Bullish hidden: price higher low + RSI lower low → uptrend continues
+    if (shMinPrice > fhMinPrice * 1.002 && shMinRsi < fhMinRsi - 2) {
+      score += 10;
+      signals.push('⚡ Hidden Bull');
+    }
+    if (shMaxPrice < fhMaxPrice * 0.998 && shMaxRsi > fhMaxRsi + 2) {
+      score -= 10;
+      signals.push('⚡ Hidden Bear');
+    }
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : Math.abs(score) >= 10 ? 'watch' : 'wait';
+    this.conf   = this._conf(50 + Math.abs(score) * 1.0);
+
+    this.report = {
+      rsiNow:    rsiSeries.at(-1)?.toFixed(1) || '--',
+      histNow:   hist.at(-1)?.toFixed(3) || '--',
+      divergences: signals.length > 0 ? signals.join(', ') : 'No divergence',
+      strength:  score === 0 ? 'None' : `${score > 0 ? '+' : ''}${score}`,
+    };
+    this.lastLog = `Divergence: ${signals.length > 0 ? signals.join('+') : 'none'} | score ${score}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    MTF ANALYST — Multi-Timeframe Alignment (1h + 4h + Daily)
    อ่าน trend จากแต่ละ TF ที่ market.js cache ไว้
    ═══════════════════════════════════════════════════════ */
@@ -693,8 +814,14 @@ class HeadAgent extends BaseAgent {
     const weights = { 'buy': 1, 'sell': -1, 'watch': 0, 'wait': 0 };
     let weightedScore = 0, totalWeight = 0;
 
+    // Smart Filter: skip agents with weightMul < 0.5 (KB says they're bad in this context)
+    // ป้องกัน agent ที่ทายผิดบ่อย → drag down decision
+    const minWeight = typeof Settings !== 'undefined' ? Settings.get('minAgentWeight', 0.5) : 0.5;
+
     results.forEach(r => {
       if (!r) return;
+      // Skip if KB has marked this agent unreliable
+      if (r.weightMul !== undefined && r.weightMul < minWeight) return;
       const w = (r.conf / 100) * (r.signal === 'buy' || r.signal === 'sell' ? 1.5 : 0.5);
       weightedScore += (weights[r.signal] ?? 0) * r.conf * w;
       totalWeight   += r.conf * w;
@@ -733,12 +860,13 @@ class GoldTeam {
     this.elliott   = new ElliottWaveAgent('GOLD');
     this.fib       = new FibonacciAgent('GOLD');
     this.rsi       = new RSIValueAgent('GOLD');
-    this.macd      = new MACDAgent('GOLD');
-    this.bollinger = new BollingerAgent('GOLD');
-    this.pivot     = new PivotAgent('GOLD');
-    this.pattern   = new PatternAgent('GOLD');
-    this.mtf       = new MTFAgent('GOLD', 'XAUUSD');
-    this.news      = new NewsAgent('GOLD', ['XAU', 'USD']);
+    this.macd       = new MACDAgent('GOLD');
+    this.bollinger  = new BollingerAgent('GOLD');
+    this.pivot      = new PivotAgent('GOLD');
+    this.pattern    = new PatternAgent('GOLD');
+    this.divergence = new DivergenceAgent('GOLD');
+    this.mtf        = new MTFAgent('GOLD', 'XAUUSD');
+    this.news       = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
   _on(key, def = true) {
@@ -769,7 +897,8 @@ class GoldTeam {
     if (this._on('enableMACD',      true)) { agents.macd      = wt(this.macd.analyze(data),      'Gold-MACD');      reports.push(agents.macd); }
     if (this._on('enableBollinger', true)) { agents.bollinger = wt(this.bollinger.analyze(data), 'Gold-Bollinger'); reports.push(agents.bollinger); }
     if (this._on('enablePivot',     false)){ agents.pivot     = wt(this.pivot.analyze(data),     'Gold-Pivot');     reports.push(agents.pivot); }
-    if (this._on('enablePattern',   true)) { agents.pattern   = wt(this.pattern.analyze(data),   'Gold-Pattern');   reports.push(agents.pattern); }
+    if (this._on('enablePattern',   true)) { agents.pattern    = wt(this.pattern.analyze(data),    'Gold-Pattern');    reports.push(agents.pattern); }
+    if (this._on('enableDivergence',true)) { agents.divergence = wt(this.divergence.analyze(data), 'Gold-Divergence'); reports.push(agents.divergence); }
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(this.mtf.analyze(data, market), 'Gold-MTF'); reports.push(agents.mtf); }
     if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
@@ -803,24 +932,26 @@ class CurrencyTeam {
       fib:       new FibonacciAgent('AUDUSD'),
       rsi:       new RSIValueAgent('AUDUSD'),
       macd:      new MACDAgent('AUDUSD'),
-      bollinger: new BollingerAgent('AUDUSD'),
-      pivot:     new PivotAgent('AUDUSD'),
-      pattern:   new PatternAgent('AUDUSD'),
-      mtf:       new MTFAgent('AUDUSD', 'AUDUSD'),
+      bollinger:  new BollingerAgent('AUDUSD'),
+      pivot:      new PivotAgent('AUDUSD'),
+      pattern:    new PatternAgent('AUDUSD'),
+      divergence: new DivergenceAgent('AUDUSD'),
+      mtf:        new MTFAgent('AUDUSD', 'AUDUSD'),
     };
 
     // EURUSD sub-analysts
     this.eur = {
-      head:      new HeadAgent('Lt.EUR', 'EURUSD', 'EURUSD'),
-      smc:       new SMCAgent('EURUSD'),
-      elliott:   new ElliottWaveAgent('EURUSD'),
-      fib:       new FibonacciAgent('EURUSD'),
-      rsi:       new RSIValueAgent('EURUSD'),
-      macd:      new MACDAgent('EURUSD'),
-      bollinger: new BollingerAgent('EURUSD'),
-      pivot:     new PivotAgent('EURUSD'),
-      pattern:   new PatternAgent('EURUSD'),
-      mtf:       new MTFAgent('EURUSD', 'EURUSD'),
+      head:       new HeadAgent('Lt.EUR', 'EURUSD', 'EURUSD'),
+      smc:        new SMCAgent('EURUSD'),
+      elliott:    new ElliottWaveAgent('EURUSD'),
+      fib:        new FibonacciAgent('EURUSD'),
+      rsi:        new RSIValueAgent('EURUSD'),
+      macd:       new MACDAgent('EURUSD'),
+      bollinger:  new BollingerAgent('EURUSD'),
+      pivot:      new PivotAgent('EURUSD'),
+      pattern:    new PatternAgent('EURUSD'),
+      divergence: new DivergenceAgent('EURUSD'),
+      mtf:        new MTFAgent('EURUSD', 'EURUSD'),
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -862,7 +993,8 @@ class CurrencyTeam {
     if (this._on('enableMACD',      true)) { agents.macd      = wt(pair.macd.analyze(data),      'MACD');      reports.push(agents.macd); }
     if (this._on('enableBollinger', true)) { agents.bollinger = wt(pair.bollinger.analyze(data), 'Bollinger'); reports.push(agents.bollinger); }
     if (this._on('enablePivot',     false)){ agents.pivot     = wt(pair.pivot.analyze(data),     'Pivot');     reports.push(agents.pivot); }
-    if (this._on('enablePattern',   true)) { agents.pattern   = wt(pair.pattern.analyze(data),   'Pattern');   reports.push(agents.pattern); }
+    if (this._on('enablePattern',   true)) { agents.pattern    = wt(pair.pattern.analyze(data),    'Pattern');    reports.push(agents.pattern); }
+    if (this._on('enableDivergence',true)) { agents.divergence = wt(pair.divergence.analyze(data), 'Divergence'); reports.push(agents.divergence); }
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(pair.mtf.analyze(data, market), 'MTF'); reports.push(agents.mtf); }
     return { agents, agg: pair.head.aggregate(reports) };
   }

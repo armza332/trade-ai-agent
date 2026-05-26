@@ -188,6 +188,14 @@ const UI = {
         { l:'Alignment', v: agents.mtf.report.alignment ?? '--', c: agents.mtf.report.alignment?.includes('All')?'up':'warn' },
       ]);
     }
+    if (agents.divergence) {
+      extraCards += this.analystCard('🔄', 'Divergence', agents.divergence.signal, [
+        { l:'RSI Now',    v: agents.divergence.report.rsiNow ?? '--' },
+        { l:'MACD Hist',  v: agents.divergence.report.histNow ?? '--' },
+        { l:'Strength',   v: agents.divergence.report.strength ?? '--', c: 'warn' },
+        { l:'Signals',    v: agents.divergence.report.divergences ?? '--', c: 'info' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}

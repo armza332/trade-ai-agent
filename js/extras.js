@@ -224,6 +224,8 @@ const Settings = {
     enablePattern:   true,
     enableNews:      true,
     enableMTF:       true,
+    enableDivergence: true,
+    minAgentWeight:  0.5,     // skip agents with KB weight below this in voting
     keepAlive:       true,    // wake lock + browser notification
   },
 
@@ -516,10 +518,11 @@ const Modal = {
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
     const ka = document.getElementById('s-keepalive'); if (ka) ka.checked = Settings.get('keepAlive', true);
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
+    const mw = document.getElementById('s-minweight'); if (mw) mw.value = Settings.get('minAgentWeight', 0.5);
   },
 
   saveSettings() {
@@ -544,10 +547,11 @@ const Modal = {
       }
     }
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','MTF','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) Settings.set('enable' + name, el.checked);
     });
+    const mw = document.getElementById('s-minweight'); if (mw) Settings.set('minAgentWeight', parseFloat(mw.value) || 0.5);
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -852,12 +856,13 @@ const AgentScores = {
     });
   },
 
-  /** Weight multiplier — รับ context (regime, symbol) เพื่อหา bucket ที่เกี่ยวข้องที่สุด */
+  /** Weight multiplier — รวม accuracy + average R per trade
+   *  ทำให้ agent ที่ทั้งทายถูกบ่อย + ทำเงินได้เยอะ ได้ weight สูง
+   *  agent ที่ทายถูกแต่กำไรน้อย (เช่น scratch trades) ไม่ได้ boost เต็ม */
   weight(agentName, ctx = {}) {
     const a = this.load().agents[agentName];
     if (!a) return 1.0;
 
-    // Priority: regime > symbol > all (use first bucket with enough trades)
     const bucketsToTry = [];
     if (ctx.regime)               bucketsToTry.push(ctx.regime);
     if (ctx.symbol)               bucketsToTry.push(`sym_${ctx.symbol}`);
@@ -866,8 +871,11 @@ const AgentScores = {
     for (const bk of bucketsToTry) {
       const s = a[bk];
       if (s && s.t >= this.MIN_TRADES) {
-        const acc = s.w / s.t;
-        return Math.max(0.3, Math.min(2.0, 1.0 + (acc - 0.5) * 2));
+        const acc  = s.w / s.t;
+        const avgR = s.R / s.t;
+        // Score: accuracy delta (50% baseline) + avgR contribution
+        const score = (acc - 0.5) * 2 + Math.max(-0.6, Math.min(0.6, avgR * 0.5));
+        return Math.max(0.2, Math.min(2.5, 1.0 + score));
       }
     }
     return 1.0;
