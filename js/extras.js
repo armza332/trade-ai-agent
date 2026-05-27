@@ -1837,6 +1837,22 @@ const BotBridge = {
     if (!Settings.get('webAISignalsToEA', false)) return;        // user must opt-in
     const url = Settings.get('botBridgeURL', '');
     if (!url || url.length < 20) return;
+
+    // Phase 23.1: SMALL-PORTFOLIO GUARD — wait for open trades to close before
+    // firing a new one when the account is small (limits concurrent exposure).
+    const bot = this.lastStatus;
+    const openPos = (bot && bot.positions) ? bot.positions.length : 0;
+    const bal = (bot && typeof bot.balance === 'number') ? bot.balance
+              : (typeof Settings !== 'undefined' ? Settings.get('accountSize', 30) : 30);
+    // auto cap by balance: <$50 = 1 trade, <$150 = 2, else 3 (override via setting)
+    const autoCap = bal < 50 ? 1 : bal < 150 ? 2 : 3;
+    const maxConc = (typeof Settings !== 'undefined') ? Settings.get('maxConcurrent', autoCap) : autoCap;
+    if (openPos >= maxConc) {
+      if (typeof UI !== 'undefined' && UI.addLog)
+        UI.addLog('CMD', 'RiskGuard', `⏳ มี ${openPos} ไม้เปิดอยู่ (เพดาน ${maxConc} · พอร์ต $${bal.toFixed(0)}) — รอปิดก่อนค่อยเข้าใหม่`);
+      return;
+    }
+
     // Map web symbol (XAUUSD/AUDUSD/EURUSD) to broker symbol (add 'm' suffix Exness Cent demo)
     const brokerSym = this._mapToBrokerSym(sym);
     if (!brokerSym) return;
@@ -2705,6 +2721,8 @@ const Company = {
     trend:       { name:'Trend-Follow',   icon:'📈', agents:['utbot','macd','mtf'],           desc:'เทรนด์ UT-Bot + momentum MACD + MTF ยืนยัน' },
     smart_money: { name:'Smart-Money',    icon:'🧱', agents:['orderblock','fvg','sweep'],     desc:'โซน OB + ช่อง FVG + กวาด liquidity (S/D)' },
     breakout:    { name:'Breakout',       icon:'🚀', agents:['breakout','utbot','pattern'],   desc:'เบรกกรอบ + เทรนด์หนุน + แท่งยืนยัน' },
+    reversal_sr: { name:'Reversal @ S/R', icon:'🔄', agents:['pivot','rsi','pattern'],        desc:'ราคาถึงแนว S/R + RSI สุดขั้ว + แท่งกลับตัว' },
+    wave:        { name:'Wave/Structure', icon:'🌊', agents:['elliott','fib','smc'],          desc:'นับ Elliott + Fib retrace + โครงสร้าง SMC' },
   },
   // Pick the COMBO whose members are collectively best on this pair (KB avg
   // member edge). Defaults to a theory-sound combo if KB has no clear winner.
