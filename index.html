@@ -6,7 +6,7 @@
   <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="pragma" content="no-cache">
   <meta http-equiv="expires" content="0">
-  <title>TRADING WAR ROOM — AI Agent System v18.0</title>
+  <title>TRADING WAR ROOM — AI Agent System v19.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -254,6 +254,17 @@
         </div>
       </div>
 
+      <!-- Phase 19: Adaptive AI -->
+      <div class="form-group" style="border:1px solid var(--purple);padding:6px 8px;background:rgba(120,80,255,0.06)">
+        <label class="form-label" style="color:var(--purple)">🧠 ADAPTIVE AI (Phase 19)</label>
+        <label class="form-checkbox" style="display:block;margin:4px 0">
+          <input id="s-recency" type="checkbox"> 🕐 Recency Learning — ให้ trade ล่าสุดสำคัญกว่า (ปรับตามตลาดที่เปลี่ยน)
+        </label>
+        <label class="form-checkbox" style="display:block;margin:4px 0">
+          <input id="s-autoapply" type="checkbox"> 🤖 Auto-Apply Strategy — ปรับ agent/symbol เองทุก +100 trades (แจ้งไม่ต้องกด)
+        </label>
+      </div>
+
       <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">📈 ADX Gate <span class="hint">(0=ปิด, 20=ตลาด trend)</span></label>
@@ -281,6 +292,9 @@
           <label class="form-checkbox"><input id="s-en-Ichimoku"   type="checkbox" checked> 🌥 Ichimoku Cloud (H1+)</label>
           <label class="form-checkbox"><input id="s-en-DXY"        type="checkbox" checked> 💵 DXY (USD strength)</label>
           <label class="form-checkbox"><input id="s-en-UTBot"      type="checkbox" checked> 🎯 UT-Bot (ATR trail trend)</label>
+          <label class="form-checkbox"><input id="s-en-OrderBlock" type="checkbox" checked> 🧱 Order Block (SMC zone)</label>
+          <label class="form-checkbox"><input id="s-en-Sweep"      type="checkbox" checked> 💧 Liquidity Sweep</label>
+          <label class="form-checkbox"><input id="s-en-Breakout"   type="checkbox" checked> 🚀 Breakout + Zone</label>
           <label class="form-checkbox"><input id="s-en-News"       type="checkbox" checked> 📰 News Intel</label>
         </div>
       </div>
@@ -541,13 +555,13 @@
 </div>
 
 <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-<script src="js/i18n.js?v=18.0"></script>
-<script src="js/market.js?v=18.0"></script>
-<script src="js/agents.js?v=18.0"></script>
-<script src="js/ui.js?v=18.0"></script>
-<script src="js/extras.js?v=18.0"></script>
-<script src="js/backtest.js?v=18.0"></script>
-<script src="js/app.js?v=18.0"></script>
+<script src="js/i18n.js?v=19.0"></script>
+<script src="js/market.js?v=19.0"></script>
+<script src="js/agents.js?v=19.0"></script>
+<script src="js/ui.js?v=19.0"></script>
+<script src="js/extras.js?v=19.0"></script>
+<script src="js/backtest.js?v=19.0"></script>
+<script src="js/app.js?v=19.0"></script>
 
 </body>
 </html>

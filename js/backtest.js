@@ -73,6 +73,9 @@ const Backtest = {
           ichimoku:   new IchimokuAgent(symbol),       // ← FIX: was missing (Phase 14)
           dxy:        new DXYAgent(symbol),             // ← FIX: was missing (Phase 14)
           utbot:      new UTBotAgent(symbol),           // Phase 15.3
+          orderblock: new OrderBlockAgent(symbol),      // Phase 19
+          sweep:      new SweepAgent(symbol),
+          breakout:   new BreakoutAgent(symbol),
           news:       new NewsAgent('BT', newsPairs),   // ← FIX: was missing
         };
       }
@@ -170,6 +173,9 @@ const Backtest = {
             if (Settings.get('enableIchimoku', true))   collect(pairTeam.ichimoku.analyze(fakeData),   'ichimoku');
             if (Settings.get('enableDXY', true))        collect(pairTeam.dxy.analyze(fakeData),        'dxy');
             if (Settings.get('enableUTBot', true))      collect(pairTeam.utbot.analyze(fakeData),      'utbot');
+            if (Settings.get('enableOrderBlock', true)) collect(pairTeam.orderblock.analyze(fakeData), 'orderblock');
+            if (Settings.get('enableSweep', true))      collect(pairTeam.sweep.analyze(fakeData),      'sweep');
+            if (Settings.get('enableBreakout', true))   collect(pairTeam.breakout.analyze(fakeData),   'breakout');
             if (Settings.get('enableNews', true))       collect(pairTeam.news.analyze(),               'news');
             const agg = pairTeam.head.aggregate(agents);
             res = { head: { signal: agg.signal, conf: agg.conf } };
@@ -184,7 +190,7 @@ const Backtest = {
 
               // Snapshot agent votes + regime for KB feedback
               const prefix = symbol === 'XAUUSD' ? 'Gold' : (symbol === 'AUDUSD' ? 'AUD' : 'EUR');
-              const nameMap = { smc:'SMC', elliott:'Elliott', fib:'Fib', rsi:'RSI', macd:'MACD', bollinger:'Bollinger', pivot:'Pivot', pattern:'Pattern', divergence:'Divergence', mtf:'MTF', ichimoku:'Ichimoku', dxy:'DXY', utbot:'UT-Bot', news:'News' };
+              const nameMap = { smc:'SMC', elliott:'Elliott', fib:'Fib', rsi:'RSI', macd:'MACD', bollinger:'Bollinger', pivot:'Pivot', pattern:'Pattern', divergence:'Divergence', mtf:'MTF', ichimoku:'Ichimoku', dxy:'DXY', utbot:'UT-Bot', orderblock:'OrderBlock', sweep:'Sweep', breakout:'Breakout', news:'News' };
               const votes = Object.entries(agentReports).map(([key, r]) => ({
                 agent: `${prefix}-${nameMap[key] || key}`,
                 signal: r.signal,

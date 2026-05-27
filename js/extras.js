@@ -542,13 +542,15 @@ const Modal = {
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
     const ka = document.getElementById('s-keepalive'); if (ka) ka.checked = Settings.get('keepAlive', true);
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
     const mw = document.getElementById('s-minweight'); if (mw) mw.value = Settings.get('minAgentWeight', 0.5);
     const bb = document.getElementById('s-botbridge'); if (bb) bb.value = Settings.get('botBridgeURL', '');
     const ws = document.getElementById('s-web-ai-signals'); if (ws) ws.checked = Settings.get('webAISignalsToEA', false);
+    const rc = document.getElementById('s-recency'); if (rc) rc.checked = Settings.get('kbRecencyDecay', 1.0) < 1.0;
+    const aa = document.getElementById('s-autoapply'); if (aa) aa.checked = Settings.get('autoApplyStrategy', false);
   },
 
   saveSettings() {
@@ -582,7 +584,7 @@ const Modal = {
       }
     }
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) Settings.set('enable' + name, el.checked);
     });
@@ -593,6 +595,10 @@ const Modal = {
     }
     const ws = document.getElementById('s-web-ai-signals');
     if (ws) Settings.set('webAISignalsToEA', ws.checked);
+    const rc = document.getElementById('s-recency');
+    if (rc) Settings.set('kbRecencyDecay', rc.checked ? 0.99 : 1.0);
+    const aa = document.getElementById('s-autoapply');
+    if (aa) Settings.set('autoApplyStrategy', aa.checked);
 
     const status = document.getElementById('s-status');
     status.textContent = '✓ บันทึกแล้ว';
@@ -896,8 +902,15 @@ const AgentScores = {
       if (regime) buckets.push(regime);
       if (symbol) buckets.push(`sym_${symbol}`);
 
+      // Phase 19: Recency decay — fade old data so KB adapts to current market.
+      // decay 1.0 = off (cumulative). 0.99 = recent trades dominate over time.
+      const decay = (typeof Settings !== 'undefined') ? Settings.get('kbRecencyDecay', 1.0) : 1.0;
+
       buckets.forEach(bk => {
         if (!a[bk]) a[bk] = { t: 0, w: 0, l: 0, R: 0 };
+        if (decay < 1.0) {
+          a[bk].t *= decay; a[bk].w *= decay; a[bk].l *= decay; a[bk].R *= decay;
+        }
         a[bk].t++;
         if (correct) a[bk].w++; else a[bk].l++;
         a[bk].R += rDelta;
@@ -1046,7 +1059,7 @@ const AgentScores = {
       return;
     }
 
-    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'];
+    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','News'];
 
     // 1. Profitable symbols = enable all with totalR > 0 AND winnerCount >= 2
     const profitableSyms = rec.filter(s => s.totalR > 30 && s.winnerCount >= 2);
@@ -1084,32 +1097,54 @@ const AgentScores = {
     report += `\nดำเนินการต่อ?`;
 
     if (!confirm(report)) return;
+    this._doApply(enabledSyms, winners, universalLosers, ALL_AGENTS);
+    alert(`✅ Smart Apply Done!\n\nSymbols เปิด: ${enabledSyms.join(', ')}\nWinners: ${[...winners].join(', ')}`);
+    if (typeof Modal !== 'undefined') Modal.open('journal');
+  },
 
-    // 1. Symbol filter — enable profitable symbols
+  // Phase 19: shared apply core (used by manual + auto)
+  _doApply(enabledSyms, winners, universalLosers, ALL_AGENTS) {
     Settings.set('enableXAU', enabledSyms.includes('XAUUSD'));
     Settings.set('enableAUD', enabledSyms.includes('AUDUSD'));
     Settings.set('enableEUR', enabledSyms.includes('EURUSD'));
-
-    // 2. Analyst toggles — keep winners + MTF/News, disable universal losers
     ALL_AGENTS.forEach(name => {
-      if (name === 'MTF' || name === 'News') {
-        Settings.set('enable' + name, true);
-      } else if (winners.has(name)) {
-        Settings.set('enable' + name, true);
-      } else if (universalLosers.includes(name)) {
-        Settings.set('enable' + name, false);
-      }
-      // Otherwise: leave as-is (agent มี mixed performance)
+      if (name === 'MTF' || name === 'News') Settings.set('enable' + name, true);
+      else if (winners.has(name))            Settings.set('enable' + name, true);
+      else if (universalLosers.includes(name)) Settings.set('enable' + name, false);
     });
-
-    // 3. Set min grade to A (strict)
     Settings.set('minGrade', 'A');
-
-    // 4. Set risk to 1.5% (conservative for small account)
     Settings.set('riskPerTrade', Math.min(2, Settings.get('riskPerTrade', 2)));
+  },
 
-    alert(`✅ Smart Apply Done!\n\nSymbols เปิด: ${enabledSyms.join(', ')}\nWinners agents: ${[...winners].join(', ')}\n\nระบบใช้ KB-weighting → แต่ละ symbol จะใช้แค่ agent ที่เก่งสำหรับ symbol นั้นเอง`);
-    if (typeof Modal !== 'undefined') Modal.open('journal');
+  // Phase 19: AUTO-APPLY — runs on schedule, no click needed, just notifies
+  _lastAutoApply: 0,
+  autoApplyTick() {
+    if (typeof Settings === 'undefined' || !Settings.get('autoApplyStrategy', false)) return;
+    const kb = this.load();
+    const total = (kb.meta?.liveTrades || 0) + (kb.meta?.backtestTrades || 0);
+    // re-apply every +100 trades of new data (avoid flipping mid-trade)
+    if (total - this._lastAutoApply < 100) return;
+    this._lastAutoApply = total;
+
+    const rec = this.recommendStrategy();
+    if (!rec[0] || rec[0].topAgents.length < 2) return;
+    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','News'];
+    const profitableSyms = rec.filter(s => s.totalR > 30 && s.winnerCount >= 2);
+    if (profitableSyms.length === 0) return;
+    const enabledSyms = profitableSyms.map(s => s.symbol);
+    const winners = new Set();
+    profitableSyms.forEach(s => s.topAgents.forEach(a => winners.add(a.shortName)));
+    const universalLosers = [];
+    ALL_AGENTS.forEach(name => {
+      if (winners.has(name) || name === 'MTF' || name === 'News') return;
+      const hasProfit = rec.some(s => [...s.topAgents, ...s.worstAgents].find(a => a.shortName === name && a.R > 0));
+      if (!hasProfit) universalLosers.push(name);
+    });
+    this._doApply(enabledSyms, winners, universalLosers, ALL_AGENTS);
+    const msg = `🤖 Auto-Apply: เปิด ${enabledSyms.join('+')} · winners ${[...winners].slice(0,5).join(', ')}`;
+    if (typeof UI !== 'undefined') UI.addLog?.('CMD', 'Strategy', msg);
+    if (typeof KeepAlive !== 'undefined') KeepAlive.notify('🤖 Strategy Auto-Apply', msg, {});
+    console.log('Phase 19 Auto-Apply:', { enabledSyms, winners: [...winners], universalLosers });
   },
 
   /** Render recommended strategy panel */
@@ -1739,6 +1774,7 @@ const BotBridge = {
       this.recentTrades = data.trades.slice(0, 15);   // Phase 15.5: keep latest 15 for display
       this.allTrades = data.trades;                     // Phase 16: full list for analytics
       this.checkAutoAdjust(data.trades);                // Phase 16: consecutive-loss guard
+      if (typeof AgentScores !== 'undefined') AgentScores.autoApplyTick();  // Phase 19: auto-apply strategy
       let newCount = 0;
       data.trades.forEach(t => {
         if (!t || !t.posId) return;

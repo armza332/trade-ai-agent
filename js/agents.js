@@ -81,6 +81,102 @@ class SMCAgent extends BaseAgent {
 }
 
 /* ═══════════════════════════════════════════════════════
+   PHASE 19 — SMC split into independent micro-agents
+   (so you can disable the weak part, keep the strong part,
+    and tune each per symbol via KB)
+   ═══════════════════════════════════════════════════════ */
+
+// 🧱 Order Block — institutional supply/demand zones
+class OrderBlockAgent extends BaseAgent {
+  constructor(team) { super('OrderBlock', 'Institutional OB zones', '🧱', team); }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 30) return { signal:'wait', conf:30, report:{}, log:'no data' };
+    const obs  = TA.orderBlocks(candles);
+    const last = candles.at(-1);
+    const bull = obs.filter(o => o.type === 'bull' && last.close >= o.bot && last.close <= o.top * 1.02);
+    const bear = obs.filter(o => o.type === 'bear' && last.close <= o.top && last.close >= o.bot * 0.98);
+    const near = bull.length ? bull.at(-1) : bear.length ? bear.at(-1) : null;
+    let score = 0;
+    if (near?.type === 'bull') score += 25;
+    if (near?.type === 'bear') score -= 25;
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : 'wait';
+    this.conf = this._conf(50 + Math.abs(score) * 0.9);
+    const d = cfg.digits - 1;
+    this.report = {
+      zone:  near ? `${near.type.toUpperCase()} OB @ ${near.origin.toFixed(d)}` : 'No OB nearby',
+      bullOB: bull.length, bearOB: bear.length,
+      action: near ? (near.type==='bull'?'🟢 ที่ demand — รอ buy':'🔴 ที่ supply — รอ sell') : '— รอราคาเข้าโซน',
+    };
+    this.lastLog = `OB ${this.signal} | ${this.report.zone}`;
+    return { signal:this.signal, conf:this.conf, report:this.report, log:this.lastLog };
+  }
+}
+
+// 💧 Liquidity Sweep — price grabs stops then reverses
+class SweepAgent extends BaseAgent {
+  constructor(team) { super('Sweep', 'Liquidity grab + reversal', '💧', team); }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 25) return { signal:'wait', conf:30, report:{}, log:'no data' };
+    const look = candles.slice(-20, -1);
+    const swingHi = Math.max(...look.map(c => c.high));
+    const swingLo = Math.min(...look.map(c => c.low));
+    const last = candles.at(-1);
+    // bullish sweep: wick below swing low but close back above
+    const bullSweep = last.low < swingLo && last.close > swingLo;
+    // bearish sweep: wick above swing high but close back below
+    const bearSweep = last.high > swingHi && last.close < swingHi;
+    let score = 0;
+    if (bullSweep) score += 28;
+    if (bearSweep) score -= 28;
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : 'wait';
+    this.conf = this._conf(50 + Math.abs(score));
+    const d = cfg.digits - 1;
+    this.report = {
+      swingHi: swingHi.toFixed(d), swingLo: swingLo.toFixed(d),
+      sweep: bullSweep ? '🟢 Bullish sweep (กวาด low เด้งขึ้น)' : bearSweep ? '🔴 Bearish sweep (กวาด high ลง)' : '— ไม่มี sweep',
+    };
+    this.lastLog = `Sweep ${this.signal} | ${this.report.sweep}`;
+    return { signal:this.signal, conf:this.conf, report:this.report, log:this.lastLog };
+  }
+}
+
+// 🚀 Breakout + Premium/Discount Zone — BOS continuation + range position
+class BreakoutAgent extends BaseAgent {
+  constructor(team) { super('Breakout', 'BOS breakout + premium/discount', '🚀', team); }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 30) return { signal:'wait', conf:30, report:{}, log:'no data' };
+    const bos = TA.bos(candles);
+    const look = candles.slice(-50);
+    const hi = Math.max(...look.map(c => c.high));
+    const lo = Math.min(...look.map(c => c.low));
+    const last = candles.at(-1).close;
+    const rangePos = (hi > lo) ? (last - lo) / (hi - lo) : 0.5;   // 0=discount,1=premium
+    const zone = rangePos >= 0.7 ? 'PREMIUM' : rangePos <= 0.3 ? 'DISCOUNT' : 'EQUILIBRIUM';
+
+    let score = 0;
+    if (bos.bull && !bos.fake) score += 25;
+    if (bos.bear && !bos.fake) score -= 25;
+    // Premium → favor sells; Discount → favor buys (smart-money logic)
+    if (zone === 'DISCOUNT') score += 10;
+    if (zone === 'PREMIUM')  score -= 10;
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : 'wait';
+    this.conf = this._conf(50 + Math.abs(score) * 0.8);
+    const d = cfg.digits - 1;
+    this.report = {
+      bos: bos.bull ? (bos.fake?'FAKE↑':'REAL↑') : bos.bear ? (bos.fake?'FAKE↓':'REAL↓') : 'None',
+      zone: `${zone} (${(rangePos*100).toFixed(0)}%)`,
+      hi: hi.toFixed(d), lo: lo.toFixed(d),
+    };
+    this.lastLog = `Breakout ${this.signal} | BOS ${this.report.bos} | ${zone}`;
+    return { signal:this.signal, conf:this.conf, report:this.report, log:this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    ELLIOTT WAVE ANALYST
    ═══════════════════════════════════════════════════════ */
 class ElliottWaveAgent extends BaseAgent {
@@ -1156,6 +1252,9 @@ class GoldTeam {
     this.ichimoku   = new IchimokuAgent('GOLD');   // Phase 14
     this.dxy        = new DXYAgent('GOLD');         // Phase 14
     this.utbot      = new UTBotAgent('GOLD');       // Phase 15.3
+    this.orderblock = new OrderBlockAgent('GOLD');  // Phase 19
+    this.sweep      = new SweepAgent('GOLD');        // Phase 19
+    this.breakout   = new BreakoutAgent('GOLD');     // Phase 19
     this.news       = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
@@ -1193,6 +1292,9 @@ class GoldTeam {
     if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(this.ichimoku.analyze(data),  'Gold-Ichimoku');  reports.push(agents.ichimoku); }
     if (this._on('enableDXY',       true)) { agents.dxy       = wt(this.dxy.analyze(data),       'Gold-DXY');       reports.push(agents.dxy); }
     if (this._on('enableUTBot',     true)) { agents.utbot     = wt(this.utbot.analyze(data),     'Gold-UT-Bot');    reports.push(agents.utbot); }
+    if (this._on('enableOrderBlock',true)) { agents.orderblock= wt(this.orderblock.analyze(data),'Gold-OrderBlock');reports.push(agents.orderblock); }
+    if (this._on('enableSweep',     true)) { agents.sweep     = wt(this.sweep.analyze(data),     'Gold-Sweep');     reports.push(agents.sweep); }
+    if (this._on('enableBreakout',  true)) { agents.breakout  = wt(this.breakout.analyze(data),  'Gold-Breakout');  reports.push(agents.breakout); }
     if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
     const agg = this.head.aggregate(reports);
@@ -1233,6 +1335,9 @@ class CurrencyTeam {
       ichimoku:   new IchimokuAgent('AUDUSD'),   // Phase 14
       dxy:        new DXYAgent('AUDUSD'),         // Phase 14
       utbot:      new UTBotAgent('AUDUSD'),       // Phase 15.3
+      orderblock: new OrderBlockAgent('AUDUSD'),  // Phase 19
+      sweep:      new SweepAgent('AUDUSD'),
+      breakout:   new BreakoutAgent('AUDUSD'),
     };
 
     // EURUSD sub-analysts
@@ -1251,6 +1356,9 @@ class CurrencyTeam {
       ichimoku:   new IchimokuAgent('EURUSD'),   // Phase 14
       dxy:        new DXYAgent('EURUSD'),         // Phase 14
       utbot:      new UTBotAgent('EURUSD'),       // Phase 15.3
+      orderblock: new OrderBlockAgent('EURUSD'),  // Phase 19
+      sweep:      new SweepAgent('EURUSD'),
+      breakout:   new BreakoutAgent('EURUSD'),
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -1298,6 +1406,9 @@ class CurrencyTeam {
     if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(pair.ichimoku.analyze(data),  'Ichimoku');  reports.push(agents.ichimoku); }
     if (this._on('enableDXY',       true)) { agents.dxy       = wt(pair.dxy.analyze(data),       'DXY');       reports.push(agents.dxy); }
     if (this._on('enableUTBot',     true)) { agents.utbot     = wt(pair.utbot.analyze(data),     'UT-Bot');    reports.push(agents.utbot); }
+    if (this._on('enableOrderBlock',true)) { agents.orderblock= wt(pair.orderblock.analyze(data),'OrderBlock');reports.push(agents.orderblock); }
+    if (this._on('enableSweep',     true)) { agents.sweep     = wt(pair.sweep.analyze(data),     'Sweep');     reports.push(agents.sweep); }
+    if (this._on('enableBreakout',  true)) { agents.breakout  = wt(pair.breakout.analyze(data),  'Breakout');  reports.push(agents.breakout); }
     return { agents, agg: pair.head.aggregate(reports) };
   }
 

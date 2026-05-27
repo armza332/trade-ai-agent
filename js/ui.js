@@ -59,6 +59,9 @@ const UI = {
       'DXY':        { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
       'DXY (USD)':  { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
       'UT-BOT':     { face: '🎯', title: 'Trend Sniper',     bg: '#00ced1', short: 'UT' },
+      'ORDER BLOCK':{ face: '🧱', title: 'Zone Mason',       bg: '#8b4513', short: 'OB' },
+      'LIQ SWEEP':  { face: '💧', title: 'Liquidity Hunter', bg: '#1e90ff', short: 'SWP' },
+      'BREAKOUT':   { face: '🚀', title: 'Breakout Pilot',   bg: '#ff4500', short: 'BRK' },
       'NEWS':       { face: '📺', title: 'News Anchor',      bg: '#ff1493', short: 'NWS' },
     };
     return profiles[t] || { face: '👤', title: 'Analyst', bg: '#888', short: t.slice(0,3) };
@@ -298,6 +301,30 @@ const UI = {
         { l:'ATR',      v: agents.utbot.report.atr ?? '--' },
       ]);
     }
+    // Phase 19: OB / Sweep / Breakout panels
+    if (agents.orderblock) {
+      extraCards += this.analystCard('🧱', 'Order Block', agents.orderblock.signal, [
+        { l:'Zone',   v: agents.orderblock.report.zone ?? '--', c:'info' },
+        { l:'Action', v: agents.orderblock.report.action ?? '--' },
+        { l:'Bull OB',v: agents.orderblock.report.bullOB ?? '--', c:'up' },
+        { l:'Bear OB',v: agents.orderblock.report.bearOB ?? '--', c:'dn' },
+      ]);
+    }
+    if (agents.sweep) {
+      extraCards += this.analystCard('💧', 'Liq Sweep', agents.sweep.signal, [
+        { l:'Sweep',   v: agents.sweep.report.sweep ?? '--', c: agents.sweep.signal==='buy'?'up':agents.sweep.signal==='sell'?'dn':'' },
+        { l:'SwingHi', v: agents.sweep.report.swingHi ?? '--', c:'dn' },
+        { l:'SwingLo', v: agents.sweep.report.swingLo ?? '--', c:'up' },
+      ]);
+    }
+    if (agents.breakout) {
+      extraCards += this.analystCard('🚀', 'Breakout', agents.breakout.signal, [
+        { l:'BOS',  v: agents.breakout.report.bos ?? '--', c: agents.breakout.report.bos?.includes('↑')?'up':agents.breakout.report.bos?.includes('↓')?'dn':'' },
+        { l:'Zone', v: agents.breakout.report.zone ?? '--', c:'info' },
+        { l:'High', v: agents.breakout.report.hi ?? '--' },
+        { l:'Low',  v: agents.breakout.report.lo ?? '--' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}
@@ -386,6 +413,19 @@ const UI = {
         { l:'Trail SL', v: agents.utbot.report?.trailStop ?? '--', c: 'warn' },
         { l:'ATR',      v: agents.utbot.report?.atr ?? '--' },
       ] : null;
+      const obM = agents.orderblock ? [
+        { l:'Zone',   v: agents.orderblock.report?.zone ?? '--', c:'info' },
+        { l:'Action', v: agents.orderblock.report?.action ?? '--' },
+      ] : null;
+      const swM = agents.sweep ? [
+        { l:'Sweep', v: agents.sweep.report?.sweep ?? '--', c: agents.sweep.signal==='buy'?'up':agents.sweep.signal==='sell'?'dn':'' },
+        { l:'Hi',    v: agents.sweep.report?.swingHi ?? '--', c:'dn' },
+        { l:'Lo',    v: agents.sweep.report?.swingLo ?? '--', c:'up' },
+      ] : null;
+      const brM = agents.breakout ? [
+        { l:'BOS',  v: agents.breakout.report?.bos ?? '--', c: agents.breakout.report?.bos?.includes('↑')?'up':agents.breakout.report?.bos?.includes('↓')?'dn':'' },
+        { l:'Zone', v: agents.breakout.report?.zone ?? '--', c:'info' },
+      ] : null;
 
       return `<div style="border-top:1px solid var(--border);padding:4px 0 0">
         <div style="font-size:7px;padding:4px 10px;color:var(--teal);border-bottom:1px solid var(--border)">
@@ -404,6 +444,9 @@ const UI = {
           ${agents.ichimoku  ? this.analystCard('🌥', 'Ichimoku',  agents.ichimoku.signal,  ichM) : ''}
           ${agents.dxy       ? this.analystCard('💵', 'DXY',       agents.dxy.signal,       dxyM) : ''}
           ${agents.utbot     ? this.analystCard('🎯', 'UT-Bot',    agents.utbot.signal,     utM) : ''}
+          ${agents.orderblock? this.analystCard('🧱', 'Order Block',agents.orderblock.signal, obM) : ''}
+          ${agents.sweep     ? this.analystCard('💧', 'Liq Sweep', agents.sweep.signal,     swM) : ''}
+          ${agents.breakout  ? this.analystCard('🚀', 'Breakout',  agents.breakout.signal,  brM) : ''}
         </div>
       </div>`;
     };
