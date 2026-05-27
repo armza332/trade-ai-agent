@@ -176,6 +176,43 @@ class BreakoutAgent extends BaseAgent {
   }
 }
 
+// 🟦 Fair Value Gap — imbalance zones (price tends to fill)
+class FVGAgent extends BaseAgent {
+  constructor(team) { super('FVG', 'Fair Value Gap imbalance', '🟦', team); }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 20) return { signal:'wait', conf:30, report:{}, log:'no data' };
+    const fvgs = TA.fvg(candles);
+    const last = candles.at(-1).close;
+    // open (unfilled) FVGs nearest price
+    const bull = fvgs.filter(f => f.type === 'bull');
+    const bear = fvgs.filter(f => f.type === 'bear');
+    const nearBull = bull.length ? bull.at(-1) : null;
+    const nearBear = bear.length ? bear.at(-1) : null;
+
+    let score = 0;
+    // Price inside a bull FVG → demand imbalance → buy bias
+    if (nearBull && last >= nearBull.bot && last <= nearBull.top * 1.01) score += 25;
+    // Price inside a bear FVG → supply imbalance → sell bias
+    if (nearBear && last <= nearBear.top && last >= nearBear.bot * 0.99) score -= 25;
+    // Open FVG above = magnet up; below = magnet down
+    if (bull.length > bear.length) score += 8;
+    if (bear.length > bull.length) score -= 8;
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' : 'wait';
+    this.conf = this._conf(50 + Math.abs(score) * 0.9);
+    const d = cfg.digits - 1;
+    this.report = {
+      nearFVG: nearBull ? `BULL [${nearBull.bot.toFixed(d)}–${nearBull.top.toFixed(d)}]`
+             : nearBear ? `BEAR [${nearBear.bot.toFixed(d)}–${nearBear.top.toFixed(d)}]` : 'No open FVG',
+      count:   `Bull:${bull.length} Bear:${bear.length}`,
+      action:  score>20?'🟢 ในโซน demand':score<-20?'🔴 ในโซน supply':'— รอราคาเข้า gap',
+    };
+    this.lastLog = `FVG ${this.signal} | ${this.report.nearFVG}`;
+    return { signal:this.signal, conf:this.conf, report:this.report, log:this.lastLog };
+  }
+}
+
 /* ═══════════════════════════════════════════════════════
    ELLIOTT WAVE ANALYST
    ═══════════════════════════════════════════════════════ */
@@ -1255,6 +1292,7 @@ class GoldTeam {
     this.orderblock = new OrderBlockAgent('GOLD');  // Phase 19
     this.sweep      = new SweepAgent('GOLD');        // Phase 19
     this.breakout   = new BreakoutAgent('GOLD');     // Phase 19
+    this.fvg        = new FVGAgent('GOLD');          // Phase 19.1
     this.news       = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
@@ -1295,6 +1333,7 @@ class GoldTeam {
     if (this._on('enableOrderBlock',true)) { agents.orderblock= wt(this.orderblock.analyze(data),'Gold-OrderBlock');reports.push(agents.orderblock); }
     if (this._on('enableSweep',     true)) { agents.sweep     = wt(this.sweep.analyze(data),     'Gold-Sweep');     reports.push(agents.sweep); }
     if (this._on('enableBreakout',  true)) { agents.breakout  = wt(this.breakout.analyze(data),  'Gold-Breakout');  reports.push(agents.breakout); }
+    if (this._on('enableFVG',       true)) { agents.fvg       = wt(this.fvg.analyze(data),       'Gold-FVG');       reports.push(agents.fvg); }
     if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
     const agg = this.head.aggregate(reports);
@@ -1338,6 +1377,7 @@ class CurrencyTeam {
       orderblock: new OrderBlockAgent('AUDUSD'),  // Phase 19
       sweep:      new SweepAgent('AUDUSD'),
       breakout:   new BreakoutAgent('AUDUSD'),
+      fvg:        new FVGAgent('AUDUSD'),          // Phase 19.1
     };
 
     // EURUSD sub-analysts
@@ -1359,6 +1399,7 @@ class CurrencyTeam {
       orderblock: new OrderBlockAgent('EURUSD'),  // Phase 19
       sweep:      new SweepAgent('EURUSD'),
       breakout:   new BreakoutAgent('EURUSD'),
+      fvg:        new FVGAgent('EURUSD'),          // Phase 19.1
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -1409,6 +1450,7 @@ class CurrencyTeam {
     if (this._on('enableOrderBlock',true)) { agents.orderblock= wt(pair.orderblock.analyze(data),'OrderBlock');reports.push(agents.orderblock); }
     if (this._on('enableSweep',     true)) { agents.sweep     = wt(pair.sweep.analyze(data),     'Sweep');     reports.push(agents.sweep); }
     if (this._on('enableBreakout',  true)) { agents.breakout  = wt(pair.breakout.analyze(data),  'Breakout');  reports.push(agents.breakout); }
+    if (this._on('enableFVG',       true)) { agents.fvg       = wt(pair.fvg.analyze(data),       'FVG');       reports.push(agents.fvg); }
     return { agents, agg: pair.head.aggregate(reports) };
   }
 

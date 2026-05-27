@@ -647,13 +647,53 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       Print("🔴 DASHBOARD: Close All → ", n, " positions");
       ObjectSetInteger(0, DASH_PFX + "BTN_CLOSE", OBJPROP_STATE, false);
    }
+   // Phase 19.1: manual BUY/SELL on the chart symbol
+   else if (sparam == DASH_PFX + "BTN_BUY") {
+      ManualTrade(true);
+      ObjectSetInteger(0, DASH_PFX + "BTN_BUY", OBJPROP_STATE, false);
+   }
+   else if (sparam == DASH_PFX + "BTN_SELL") {
+      ManualTrade(false);
+      ObjectSetInteger(0, DASH_PFX + "BTN_SELL", OBJPROP_STATE, false);
+   }
+}
+
+// Phase 19.1: manual entry from dashboard (trades the chart's symbol)
+void ManualTrade(bool isBuy) {
+   string sym = _Symbol;   // chart symbol the EA is attached to
+   // find ATR for SL/TP — use a temp handle on effTF
+   int hAtr = iATR(sym, effTF, ATRPeriod);
+   double atr = 0;
+   if (hAtr != INVALID_HANDLE) {
+      double a[]; ArraySetAsSeries(a, true);
+      if (CopyBuffer(hAtr, 0, 0, 1, a) > 0) atr = a[0];
+      IndicatorRelease(hAtr);
+   }
+   if (atr <= 0) { Print("🚫 Manual trade: ATR unavailable for ", sym); return; }
+
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   double entry = isBuy ? ask : bid;
+   double slDist = atr * effSLMult;
+   double tpDist = slDist * effRR;
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double sl = NormalizeDouble(isBuy ? entry - slDist : entry + slDist, digits);
+   double tp = NormalizeDouble(isBuy ? entry + tpDist : entry - tpDist, digits);
+   double lot = CalculateLot(sym, slDist);
+   if (lot < MinLot) lot = MinLot;
+
+   bool ok = isBuy ? trade.Buy(lot, sym, 0, sl, tp, "TWR MANUAL BUY")
+                   : trade.Sell(lot, sym, 0, sl, tp, "TWR MANUAL SELL");
+   PrintFormat("🖱 MANUAL %s %s @ ~%.5f | SL %.5f | TP %.5f | Lot %.2f → %s",
+               isBuy?"BUY":"SELL", sym, entry, sl, tp, lot,
+               ok?"OK":("FAIL "+IntegerToString(trade.ResultRetcode())));
 }
 
 void UpdateDashboard() {
    int y = DASH_Y;
 
    // ── Outer panel ──
-   DashRect("PANEL", DASH_X, y, DASH_W, 330,
+   DashRect("PANEL", DASH_X, y, DASH_W, 360,
             C'10,15,25',           // bg: dark blue-black
             C'0,255,200',          // border: cyan
             2);
@@ -810,12 +850,18 @@ void UpdateDashboard() {
    DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)(cdPct*100)) + "%",
              cdPct >= 1 ? C'0,255,100' : C'255,230,0', 8, "Consolas");
 
-   // ── Phase 15.4: AURA-style control buttons ──
+   // ── Phase 19.1: manual BUY/SELL row (trades chart symbol) ──
    y += 22;
+   int btnW2 = (DASH_W - 28) / 2;
+   DashButton("BTN_BUY",  DASH_X+12,          y, btnW2-4, 22, "▲ BUY " + _Symbol,  C'30,150,70',  C'255,255,255');
+   DashButton("BTN_SELL", DASH_X+12+btnW2,    y, btnW2-4, 22, "▼ SELL " + _Symbol, C'180,50,50',  C'255,255,255');
+
+   // ── Phase 15.4: control buttons row ──
+   y += 26;
    int btnW = (DASH_W - 32) / 3;
-   DashButton("BTN_STOP",   DASH_X+12,             y, btnW-4, 22, "⏸ STOP",   C'180,60,60',  C'255,255,255');
-   DashButton("BTN_RESUME", DASH_X+12+btnW,        y, btnW-4, 22, "▶ RESUME", C'40,140,60',  C'255,255,255');
-   DashButton("BTN_CLOSE",  DASH_X+12+btnW*2,      y, btnW-4, 22, "✖ CLOSE",  C'200,50,50',  C'255,255,255');
+   DashButton("BTN_STOP",   DASH_X+12,             y, btnW-4, 20, "⏸ STOP",   C'120,90,40',  C'255,255,255');
+   DashButton("BTN_RESUME", DASH_X+12+btnW,        y, btnW-4, 20, "▶ RESUME", C'40,140,60',  C'255,255,255');
+   DashButton("BTN_CLOSE",  DASH_X+12+btnW*2,      y, btnW-4, 20, "✖ CLOSE",  C'200,50,50',  C'255,255,255');
 }
 
 // Cleanup dashboard objects on deinit

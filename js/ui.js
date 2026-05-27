@@ -62,6 +62,8 @@ const UI = {
       'ORDER BLOCK':{ face: '🧱', title: 'Zone Mason',       bg: '#8b4513', short: 'OB' },
       'LIQ SWEEP':  { face: '💧', title: 'Liquidity Hunter', bg: '#1e90ff', short: 'SWP' },
       'BREAKOUT':   { face: '🚀', title: 'Breakout Pilot',   bg: '#ff4500', short: 'BRK' },
+      'FAIR VALUE GAP':{ face: '🟦', title: 'Gap Filler',    bg: '#4169e1', short: 'FVG' },
+      'FVG':        { face: '🟦', title: 'Gap Filler',       bg: '#4169e1', short: 'FVG' },
       'NEWS':       { face: '📺', title: 'News Anchor',      bg: '#ff1493', short: 'NWS' },
     };
     return profiles[t] || { face: '👤', title: 'Analyst', bg: '#888', short: t.slice(0,3) };
@@ -325,6 +327,13 @@ const UI = {
         { l:'Low',  v: agents.breakout.report.lo ?? '--' },
       ]);
     }
+    if (agents.fvg) {
+      extraCards += this.analystCard('🟦', 'Fair Value Gap', agents.fvg.signal, [
+        { l:'Near FVG', v: agents.fvg.report.nearFVG ?? '--', c: agents.fvg.report.nearFVG?.includes('BULL')?'up':agents.fvg.report.nearFVG?.includes('BEAR')?'dn':'info' },
+        { l:'Action',   v: agents.fvg.report.action ?? '--' },
+        { l:'Count',    v: agents.fvg.report.count ?? '--' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}
@@ -426,6 +435,10 @@ const UI = {
         { l:'BOS',  v: agents.breakout.report?.bos ?? '--', c: agents.breakout.report?.bos?.includes('↑')?'up':agents.breakout.report?.bos?.includes('↓')?'dn':'' },
         { l:'Zone', v: agents.breakout.report?.zone ?? '--', c:'info' },
       ] : null;
+      const fvM = agents.fvg ? [
+        { l:'Near', v: agents.fvg.report?.nearFVG ?? '--', c: agents.fvg.report?.nearFVG?.includes('BULL')?'up':agents.fvg.report?.nearFVG?.includes('BEAR')?'dn':'info' },
+        { l:'Count',v: agents.fvg.report?.count ?? '--' },
+      ] : null;
 
       return `<div style="border-top:1px solid var(--border);padding:4px 0 0">
         <div style="font-size:7px;padding:4px 10px;color:var(--teal);border-bottom:1px solid var(--border)">
@@ -447,6 +460,7 @@ const UI = {
           ${agents.orderblock? this.analystCard('🧱', 'Order Block',agents.orderblock.signal, obM) : ''}
           ${agents.sweep     ? this.analystCard('💧', 'Liq Sweep', agents.sweep.signal,     swM) : ''}
           ${agents.breakout  ? this.analystCard('🚀', 'Breakout',  agents.breakout.signal,  brM) : ''}
+          ${agents.fvg       ? this.analystCard('🟦', 'FVG',       agents.fvg.signal,       fvM) : ''}
         </div>
       </div>`;
     };
