@@ -1685,6 +1685,42 @@ const BotBridge = {
   liveSeenTrades: null,
   liveStats: { count: 0, wins: 0, losses: 0, totalR: 0 },
   recentTrades: [],   // Phase 15.5: raw trades for reason display
+  allTrades: [],      // Phase 16: full list for analytics
+  _autoAdjustDone: 0, // Phase 16: last consecutive-loss count we acted on
+
+  // Phase 16: consecutive-loss guard — Strategy Officer auto-reduces risk
+  checkAutoAdjust(trades) {
+    if (!Array.isArray(trades) || trades.length === 0) return;
+    // trades are newest-first (unshift). Count leading losses.
+    let streak = 0;
+    for (const t of trades) {
+      if (t.outcome === 'loss') streak++;
+      else break;
+    }
+    this.lossStreak = streak;
+    // Act once per new streak level (3, 4, 5...)
+    if (streak >= 3 && streak > this._autoAdjustDone) {
+      this._autoAdjustDone = streak;
+      const curRisk = Settings.get('riskPerTrade', 2);
+      if (streak === 3) {
+        UI.addLog?.('CMD', 'Strategy', `⚠️ แพ้ 3 ไม้ติด — Strategy Officer เฝ้าระวัง`);
+      } else if (streak === 4) {
+        const newRisk = Math.max(0.5, curRisk * 0.5);
+        Settings.set('riskPerTrade', newRisk);
+        UI.addLog?.('CMD', 'Strategy', `🛡 แพ้ 4 ไม้ติด — ลด Risk ${curRisk}%→${newRisk}% อัตโนมัติ`);
+      } else if (streak >= 5) {
+        // Auto-pause via EA command (silent — no confirm popup)
+        this.sendCommand('pause', { silent: true });
+        UI.addLog?.('CMD', 'Strategy', `🛑 แพ้ ${streak} ไม้ติด — สั่ง PAUSE บอท + แจ้ง CEO`);
+        if (typeof KeepAlive !== 'undefined') {
+          KeepAlive.notify('🛑 Strategy Officer', `แพ้ ${streak} ไม้ติด — Pause บอทอัตโนมัติ`, {});
+        }
+      }
+    }
+    // Reset when a win breaks the streak
+    if (streak === 0) this._autoAdjustDone = 0;
+  },
+  lossStreak: 0,
 
   async syncLiveTrades(url) {
     // dedupe via posId in localStorage
@@ -1697,6 +1733,8 @@ const BotBridge = {
       const data = await r.json();
       if (!data.ok || !Array.isArray(data.trades)) return;
       this.recentTrades = data.trades.slice(0, 15);   // Phase 15.5: keep latest 15 for display
+      this.allTrades = data.trades;                     // Phase 16: full list for analytics
+      this.checkAutoAdjust(data.trades);                // Phase 16: consecutive-loss guard
       let newCount = 0;
       data.trades.forEach(t => {
         if (!t || !t.posId) return;
@@ -1797,7 +1835,7 @@ const BotBridge = {
       reset_pnl: '🔄 Reset ตัวเลข W/L/PnL วันนี้?'
     };
     // Symbol toggle commands don't need confirm
-    if (!cmd.startsWith('sym_') && !confirm(confirmMsgs[cmd] || ('Send: ' + cmd))) return;
+    if (!opts.silent && !cmd.startsWith('sym_') && !confirm(confirmMsgs[cmd] || ('Send: ' + cmd))) return;
     try {
       const r = await fetch(url, {
         method: 'POST',
@@ -1979,6 +2017,102 @@ window.BotBridge = BotBridge;
    ═══════════════════════════════════════════════════════ */
 const Company = {
   chatLog: [],   // {role:'user'|'sec', text}
+  showPerf: false,   // Phase 16: performance analytics toggle
+
+  togglePerf() {
+    this.showPerf = !this.showPerf;
+    this.refreshData();
+  },
+
+  // Phase 16: Performance Analytics from full trade history
+  _performancePanel() {
+    if (!this.showPerf) {
+      return `<div style="margin-top:10px">
+        <button class="btn btn-secondary" style="font-size:9px;padding:6px 12px" onclick="Company.togglePerf()">
+          📊 เปิด Performance Analytics ▼
+        </button>
+      </div>`;
+    }
+    const trades = BotBridge?.allTrades || [];
+    if (trades.length === 0) {
+      return `<div style="margin-top:10px">
+        <button class="btn btn-secondary" style="font-size:9px;padding:6px 12px" onclick="Company.togglePerf()">📊 ปิด Performance Analytics ▲</button>
+        <div style="font-size:9px;color:var(--gray);padding:10px">— ยังไม่มี trade ปิด —</div>
+      </div>`;
+    }
+
+    // Group helpers
+    const bucket = (keyFn, labelFn) => {
+      const m = {};
+      trades.forEach(t => {
+        const k = keyFn(t);
+        if (k == null) return;
+        if (!m[k]) m[k] = { n:0, w:0, r:0 };
+        m[k].n++;
+        if (t.outcome === 'win') m[k].w++;
+        m[k].r += parseFloat(t.rMult) || 0;
+      });
+      return Object.keys(m).sort().map(k => ({ label: labelFn(k), ...m[k] }));
+    };
+
+    // By hour of day (UTC from closeTime)
+    const byHour = bucket(
+      t => { const d = new Date((t.closeTime||0)*1000); return isFinite(d) ? d.getUTCHours() : null; },
+      k => String(k).padStart(2,'0') + ':00'
+    );
+    // By session
+    const bySession = bucket(
+      t => t.sessionAtEntry || null,
+      k => k.toUpperCase()
+    );
+    // By symbol
+    const bySym = bucket(
+      t => (t.sym||'').replace(/[mczr]$/i,'').replace('USD',''),
+      k => k
+    );
+
+    const row = (b) => {
+      const wr = b.n>0 ? (b.w/b.n*100).toFixed(0) : 0;
+      const rcol = b.r>0?'var(--green)':'var(--red)';
+      return `<tr style="font-size:8px">
+        <td style="padding:2px 6px">${b.label}</td>
+        <td style="text-align:center">${b.n}</td>
+        <td style="text-align:center;color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</td>
+        <td style="text-align:right;color:${rcol}">${b.r>0?'+':''}${b.r.toFixed(1)}R</td>
+      </tr>`;
+    };
+    const tbl = (title, rows) => `
+      <div style="flex:1;min-width:0">
+        <div style="font-size:8px;color:var(--gold);margin-bottom:3px">${title}</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="font-size:6px;color:var(--gray)"><th style="text-align:left;padding:2px 6px">—</th><th>N</th><th>WR</th><th style="text-align:right">R</th></tr></thead>
+          <tbody>${rows.map(row).join('')}</tbody>
+        </table>
+      </div>`;
+
+    // Best/worst hour insight
+    let insight = '';
+    if (byHour.length > 0) {
+      const sorted = [...byHour].filter(b=>b.n>=2).sort((a,b)=>b.r-a.r);
+      if (sorted.length >= 2) {
+        const best = sorted[0], worst = sorted[sorted.length-1];
+        insight = `💡 ชั่วโมงดีสุด <b style="color:var(--green)">${best.label}</b> (${best.r>0?'+':''}${best.r.toFixed(1)}R) · แย่สุด <b style="color:var(--red)">${worst.label}</b> (${worst.r.toFixed(1)}R)`;
+      }
+    }
+
+    return `<div style="margin-top:10px;padding:10px;border:1px solid var(--gold);background:rgba(255,215,0,0.04);border-radius:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:10px;color:var(--gold);font-weight:bold">📊 PERFORMANCE ANALYTICS (${trades.length} trades)</span>
+        <button class="btn btn-secondary" style="font-size:8px;padding:3px 8px" onclick="Company.togglePerf()">▲ ปิด</button>
+      </div>
+      ${insight ? `<div style="font-size:8px;color:var(--white);margin-bottom:8px">${insight}</div>` : ''}
+      <div style="display:flex;gap:12px">
+        ${tbl('⏰ By Hour (UTC)', byHour)}
+        ${tbl('🌍 By Session', bySession)}
+        ${tbl('💱 By Symbol', bySym)}
+      </div>
+    </div>`;
+  },
 
   // Full build (called once when modal opens)
   refresh() {
@@ -2268,7 +2402,11 @@ const Company = {
     const best = sorted.slice(0, 3);
     const worst = sorted.slice(-3).reverse();
     const fmt = a => `${a.name} <b style="color:${a.R>0?'var(--green)':'var(--red)'}">${a.R>0?'+':''}${(a.R||0).toFixed(0)}R</b> (${a.t||0}t)`;
+    const streak = BotBridge?.lossStreak || 0;
+    const streakWarn = streak >= 3 ? `<div style="font-size:8px;color:var(--red);background:rgba(255,50,50,0.1);padding:4px 6px;margin-bottom:5px;border-left:2px solid var(--red)">
+      ⚠️ แพ้ ${streak} ไม้ติด — ${streak>=5?'🛑 Auto-PAUSED':streak>=4?'🛡 ลด risk อัตโนมัติ':'เฝ้าระวัง'}</div>` : '';
     return `
+      ${streakWarn}
       <div style="font-size:8px;color:var(--gray);margin-bottom:5px">📚 KB: ${live} live + ${bt} backtest trades</div>
       <div style="font-size:8px;color:var(--green);margin-bottom:3px">🏆 Top performers:</div>
       ${best.map(a => `<div style="font-size:8px;padding:2px 0">${fmt(a)}</div>`).join('')}
@@ -2482,6 +2620,9 @@ const Company = {
           ${this._claudeAdvisory()}
         </div>
       </div>
+
+      <!-- Phase 16: Performance Analytics (toggleable) -->
+      ${this._performancePanel()}
     `;
   },
 };
