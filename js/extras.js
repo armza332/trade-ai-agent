@@ -2695,46 +2695,55 @@ const Company = {
     return best;
   },
 
-  // PHASE 22.3: STABLE FIXED CORE + rare KB override.
-  // The backtest KB on synthetic data is noisy (rankings flip between runs),
-  // so we anchor on a fixed, theory-grounded core per pair and ONLY swap in
-  // a KB agent if it shows a HUGE, unmistakable edge (avgR > 0.30). This stops
-  // the strategy from flip-flopping on noise.
-  bestKitFor(sym) {
-    // Fixed core: mean-reversion (Bollinger) + trend (UT-Bot) + momentum (RSI)
-    const core = sym === 'XAUUSD' ? ['bollinger','utbot','rsi']
-               : sym === 'AUDUSD' ? ['rsi','bollinger','utbot','sweep']
-               :                    ['rsi','bollinger','utbot','sweep'];
-    if (typeof AgentScores === 'undefined') return { kit: core, skills: [] };
+  // ═══════════════════════════════════════════════════════
+  //  PHASE 23: CONFLUENCE COMBOS (not solo agents)
+  //  Real traders use techniques TOGETHER. We score & trade COMBOS —
+  //  coherent groups that confirm each other — instead of lone agents.
+  // ═══════════════════════════════════════════════════════
+  COMBOS: {
+    mean_rev:    { name:'Mean-Reversion', icon:'🎯', agents:['bollinger','rsi','divergence'], desc:'ราคาสุดขอบ BB + RSI สุดขั้ว + divergence กลับตัว' },
+    trend:       { name:'Trend-Follow',   icon:'📈', agents:['utbot','macd','mtf'],           desc:'เทรนด์ UT-Bot + momentum MACD + MTF ยืนยัน' },
+    smart_money: { name:'Smart-Money',    icon:'🧱', agents:['orderblock','fvg','sweep'],     desc:'โซน OB + ช่อง FVG + กวาด liquidity (S/D)' },
+    breakout:    { name:'Breakout',       icon:'🚀', agents:['breakout','utbot','pattern'],   desc:'เบรกกรอบ + เทรนด์หนุน + แท่งยืนยัน' },
+  },
+  // Pick the COMBO whose members are collectively best on this pair (KB avg
+  // member edge). Defaults to a theory-sound combo if KB has no clear winner.
+  bestComboFor(sym) {
+    const defaultKey = sym === 'XAUUSD' ? 'mean_rev' : 'trend';
+    if (typeof AgentScores === 'undefined') return { key: defaultKey, ...this.COMBOS[defaultKey] };
     const kb = AgentScores.load();
     const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
-    const short2key = {};
-    Object.entries(this._KEYMAP).forEach(([k, s]) => short2key[s.toLowerCase()] = k);
-    const BLACKLIST = new Set(['dxy','news','smc','orderblock','macd','ichimoku','breakout','pivot','fib','fvg']);
-    const skills = [];
-    core.forEach(key => {
-      const short = (this._KEYMAP[key] || key);
+    let bestKey = null, bestScore = -1e9;
+    Object.entries(this.COMBOS).forEach(([k, c]) => {
+      let sum = 0, n = 0;
+      c.agents.forEach(key => {
+        const short = this._KEYMAP[key] || key;
+        const rec = kb.agents[prefix + '-' + short] || kb.agents[prefix + '-' + short.toLowerCase()];
+        const b = rec && (rec['sym_' + sym] || rec.all);
+        if (b && b.t > 0) { sum += b.R / b.t; n++; }
+      });
+      const score = n >= 2 ? sum / n : -999;   // avg member edge (need >=2 with data)
+      if (score > bestScore) { bestScore = score; bestKey = k; }
+    });
+    if (!bestKey || bestScore <= 0) bestKey = defaultKey;   // no positive combo -> safe default
+    return { key: bestKey, score: bestScore, ...this.COMBOS[bestKey] };
+  },
+  // Returns the chosen combo's agents as the trader's kit (+ KB skill rows).
+  bestKitFor(sym) {
+    const combo = this.bestComboFor(sym);
+    const kb = (typeof AgentScores !== 'undefined') ? AgentScores.load() : { agents:{} };
+    const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
+    const skills = combo.agents.map(key => {
+      const short = this._KEYMAP[key] || key;
       const rec = kb.agents[prefix + '-' + short] || kb.agents[prefix + '-' + short.toLowerCase()];
       const b = rec && (rec['sym_' + sym] || rec.all);
-      skills.push(b && b.t > 0 ? { key, short, R: b.R, t: b.t, avgR: b.R / b.t, acc: Math.round(b.w / b.t * 100) }
-                              : { key, short, R: 0, t: 0, avgR: 0, acc: 0 });
+      return b && b.t > 0 ? { key, short, R: b.R, t: b.t, avgR: b.R / b.t, acc: Math.round(b.w / b.t * 100) }
+                          : { key, short, R: 0, t: 0, avgR: 0, acc: 0 };
     });
-    // Only override: add a non-core agent with a HUGE edge (avgR>0.30, t>=50)
-    Object.entries(kb.agents).forEach(([name, a]) => {
-      if (!name.startsWith(prefix + '-')) return;
-      const short = name.split('-').slice(1).join('-');
-      const key = short2key[short.toLowerCase()];
-      if (!key || core.includes(key) || BLACKLIST.has(key) || key === 'mtf' || key === 'news') return;
-      const b = a['sym_' + sym] || a.all;
-      if (!b || b.t < 50) return;
-      const avgR = b.R / b.t;
-      if (avgR > 0.30) skills.push({ key, short, R: b.R, t: b.t, avgR, acc: Math.round(b.w / b.t * 100) });
-    });
-    const kit = skills.map(s => s.key).slice(0, 5);
-    return { kit, skills };
+    return { kit: combo.agents, skills, combo: combo.name, comboIcon: combo.icon, comboDesc: combo.desc };
   },
 
-  // 3 head traders — 1 per pair, kit auto-selected from KB
+  // 3 head traders — 1 per pair, each runs the best CONFLUENCE COMBO for that pair
   _buildRoster() {
     const defs = [
       { sym:'XAUUSD', name:'Aurum',   speed:'Scalp', face:{ skin:'#e9b48c',hair:'#101015',style:'bun',  acc:'headband',accColor:'#ffd700' } },
@@ -2743,8 +2752,8 @@ const Company = {
     ];
     return defs.map(d => {
       const best = this.bestKitFor(d.sym);
-      const kitNames = best.kit.map(k => this._KEYMAP[k] || k).join(' + ');
-      return { ...d, id:'best_'+d.sym, kit: best.kit, desc:'หัวหน้าโต๊ะ · ' + kitNames };
+      return { ...d, id:'best_'+d.sym, kit: best.kit, combo: best.combo,
+               desc:`${best.comboIcon||''} คอมโบ: ${best.combo} (${best.kit.map(k => this._KEYMAP[k] || k).join('+')})` };
     });
   },
 
