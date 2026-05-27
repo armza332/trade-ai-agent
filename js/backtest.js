@@ -591,6 +591,12 @@ const AutoOptimize = {
     } finally {
       this.running = false;
       Settings.set('telegramOn', origTelegramOn);
+      // Phase 24.2: restore agent toggles after a per-employee training run
+      if (this._restoreEnables) {
+        Object.entries(this._restoreEnables).forEach(([k, v]) => Settings.set(k, v));
+        this._restoreEnables = null;
+        if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', 'Train', '✅ เทรนจบ — คืนค่า agent เดิมเรียบร้อย');
+      }
       this._renderProgress();
     }
   },

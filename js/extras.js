@@ -2854,6 +2854,24 @@ const Company = {
     { id:'emp_wv', combo:'wave',        name:'Willa',  face:{skin:'#e3c9a0',hair:'#bfe0ff',style:'long', acc:'none',    accColor:'#00e5ff'} },
   ],
 
+  // ── PHASE 24.4: AURA-style "alive" office animations (inject CSS once) ──
+  _injectFX() {
+    if (this._fxInjected || typeof document === 'undefined') return; this._fxInjected = true;
+    const css = `
+      @keyframes twrBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-2px)} }
+      @keyframes twrPulse { 0%,100%{box-shadow:0 0 6px currentColor} 50%{box-shadow:0 0 16px currentColor} }
+      @keyframes twrBlink { 0%,100%{opacity:.35} 50%{opacity:1} }
+      @keyframes twrPop { 0%{transform:scale(0.6);opacity:0} 60%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
+      @keyframes twrType { 0%{content:'·'} 33%{content:'··'} 66%{content:'···'} }
+      .twr-head { animation: twrBob 2.6s ease-in-out infinite; }
+      .twr-emp.active .twr-head { animation: twrBob 1.1s ease-in-out infinite; }
+      .twr-emp.active { animation: twrPulse 1.4s ease-in-out infinite; }
+      .twr-bubble { position:absolute; top:-14px; left:38px; font-size:7px; font-weight:bold; padding:2px 6px; border-radius:7px 7px 7px 0; color:#000; animation: twrPop .3s ease-out; white-space:nowrap; z-index:5; }
+      .twr-think { animation: twrBlink 1.2s ease-in-out infinite; }
+    `;
+    const s = document.createElement('style'); s.id = 'twr-fx'; s.textContent = css; document.head.appendChild(s);
+  },
+
   // ── PHASE 24.1: custom combos / employees (add your own, persisted) ──
   _initCustom() {
     if (this._customInited) return; this._customInited = true;
@@ -2984,19 +3002,62 @@ const Company = {
     return { signals: a.length, matched: matched.length, w, l, wr, R };
   },
 
-  // Train one employee = focused Auto-Optimize on their combo's best symbol
+  // Phase 24.2: Train ONE employee = enable ONLY their combo's agents, then
+  // run Auto-Optimize (so the KB update focuses on that combo). Original
+  // agent toggles are restored automatically when training stops.
   trainEmployee(empId) {
     const e = this.EMPLOYEES.find(x => x.id === empId); if (!e) return;
-    const combo = this.COMBOS[e.combo];
+    const combo = this.COMBOS[e.combo]; if (!combo) return;
     if (typeof AutoOptimize === 'undefined') { alert('ระบบ Train ยังไม่พร้อม'); return; }
-    if (!confirm(`🎓 เทรน ${e.name} (คอมโบ ${combo.name})?\n\nจะรัน Auto-Optimize เก็บข้อมูลให้คอมโบนี้แกร่งขึ้น\n(กด STOP ที่ Backtest เมื่อพอ)`)) return;
+    const kitTxt = combo.agents.map(k => this._KEYMAP[k] || k).join('+');
+    if (!confirm(`🎓 เทรน ${e.name} เฉพาะคอมโบ ${combo.name}?\n\nจะเปิดเฉพาะ ${kitTxt} แล้วรัน Auto-Optimize\nกด STOP ที่ Backtest เมื่อพอ → คืนค่า agent เดิมให้อัตโนมัติ`)) return;
+    const ALL = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','FVG','News'];
+    const snap = {}; ALL.forEach(n => snap['enable' + n] = Settings.get('enable' + n));
+    const on = combo.agents.map(k => this._SETKEY[k] || k);
+    ALL.forEach(n => Settings.set('enable' + n, on.includes(n)));
+    AutoOptimize._restoreEnables = snap;   // backtest.js restores this on stop
     if (typeof Modal !== 'undefined') Modal.open('backtest');
-    setTimeout(() => AutoOptimize.start({ maxCycles: 999 }), 400);
-    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', e.name, `🎓 ${e.name} กำลังเทรนคอมโบ ${combo.name}`);
+    setTimeout(() => AutoOptimize.start({ maxCycles: 999, symbols: ['XAUUSD','AUDUSD','EURUSD'] }), 400);
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', e.name, `🎓 ${e.name} เทรนคอมโบ ${combo.name} (เฉพาะ ${kitTxt})`);
+    alert(`🎓 ${e.name} เริ่มเทรนคอมโบ ${combo.name}\nเปิดเฉพาะ: ${kitTxt}\n\nกด STOP ที่หน้า Backtest เมื่อพอ — ระบบคืนค่า agent เดิมให้เอง`);
+  },
+
+  // PHASE 24.3: Audit Log + Leaderboard (CEO checks who's actually good)
+  _showAudit: false,
+  toggleAudit() { this._showAudit = !this._showAudit; if (typeof Company !== 'undefined') Company.refresh(); },
+  auditPanel() {
+    if (!this._showAudit) {
+      return `<button onclick="Company.toggleAudit()" class="btn btn-secondary" style="font-size:8px;padding:5px 12px;margin-bottom:8px">📋 เปิด Audit & Leaderboard ▼</button>`;
+    }
+    this._initCustom();
+    const ranked = this.EMPLOYEES.map(e => ({ e, st: this._employeeStats(e.id) }))
+      .sort((a, b) => b.st.R - a.st.R || b.st.wr - a.st.wr);
+    const medal = (i) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+    const lb = ranked.map((r, i) => {
+      const c = r.st.R > 0 ? 'var(--green)' : r.st.R < 0 ? 'var(--red)' : '#9aa';
+      const combo = this.COMBOS[r.e.combo];
+      return `<tr style="font-size:7px"><td>${medal(i)}</td><td style="color:var(--gold)">${r.e.name}</td><td>${combo ? combo.name : '—'}</td><td>${r.st.signals}</td><td><span style="color:var(--green)">${r.st.w}</span>/<span style="color:var(--red)">${r.st.l}</span></td><td style="color:var(--teal)">${r.st.wr}%</td><td style="color:${c};font-weight:bold">${r.st.R > 0 ? '+' : ''}${r.st.R.toFixed(1)}R</td></tr>`;
+    }).join('');
+    const log = this._loadAudit().slice(-40).reverse().map(a => {
+      const emp = this.EMPLOYEES.find(e => e.id === a.empId);
+      const oc = a.outcome === 'win' ? '<span style="color:var(--green)">✓ win</span>'
+               : a.outcome === 'loss' ? '<span style="color:var(--red)">✗ loss</span>'
+               : '<span style="color:#778">รอผล</span>';
+      const t = new Date(a.ts).toLocaleString('th-TH', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+      return `<tr style="font-size:6px"><td>${t}</td><td style="color:var(--gold)">${emp ? emp.name : a.empId}</td><td>${(a.sym||'').replace(/USD.*/,'')}</td><td style="color:${a.signal==='buy'?'var(--green)':'var(--red)'}">${a.signal}</td><td>G${a.grade}·${a.conf}%</td><td>${oc}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" style="color:#778;text-align:center">— ยังไม่มีซิกถูกบันทึก —</td></tr>';
+    return `<div style="margin-bottom:8px;padding:8px;border:1px solid var(--purple);border-radius:6px;background:rgba(120,80,255,0.05)">
+      <button onclick="Company.toggleAudit()" class="btn btn-secondary" style="font-size:8px;padding:3px 10px;margin-bottom:6px">📋 ปิด Audit ▲</button>
+      <div style="font-size:8px;color:var(--purple);font-weight:bold;margin-bottom:3px">🏆 LEADERBOARD — พนักงานเรียงตามผลจริง (R)</div>
+      <table class="j-table" style="width:100%"><thead><tr style="font-size:6px"><th>#</th><th>พนักงาน</th><th>คอมโบ</th><th>ซิก</th><th>W/L</th><th>WR</th><th>R</th></tr></thead><tbody>${lb}</tbody></table>
+      <div style="font-size:8px;color:var(--purple);font-weight:bold;margin:8px 0 3px">📜 AUDIT LOG — 40 ซิกล่าสุด (ตรวจสอบได้ทุกไม้)</div>
+      <div class="j-table-wrap" style="max-height:180px;overflow:auto"><table class="j-table" style="width:100%"><thead><tr style="font-size:6px"><th>เวลา</th><th>พนักงาน</th><th>คู่</th><th>ทิศ</th><th>เกรด</th><th>ผล</th></tr></thead><tbody>${log}</tbody></table></div>
+    </div>`;
   },
 
   renderEmployeeBoard() {
     this._initCustom();
+    this._injectFX();
     const gold = TradingWarRoom?.lastGold, fx = TradingWarRoom?.lastFX;
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
@@ -3025,9 +3086,11 @@ const Company = {
         : `<div style="width:34px;height:34px;background:${e.face.accColor}33;display:flex;align-items:center;justify-content:center;color:${e.face.accColor};font-weight:bold">${e.name[0]}</div>`;
       const stCol = st.R > 0 ? 'var(--green)' : st.R < 0 ? 'var(--red)' : '#9aa';
       const ratingStars = st.matched >= 3 ? (st.wr >= 60 ? '⭐⭐⭐' : st.wr >= 45 ? '⭐⭐' : '⭐') : '—';
-      return `<div style="flex:1;min-width:200px;padding:8px;border:1px solid ${activePair?sigCol:'var(--border)'};border-radius:6px;background:${activePair?sigCol+'14':'rgba(255,255,255,0.02)'};${activePair?`box-shadow:0 0 8px ${sigCol}55`:''}">
+      const bubble = activePair ? `<div class="twr-bubble" style="background:${sigCol}">${sig==='buy'?'▲ BUY':'▼ SELL'} ${activePair.replace('USD','')}!</div>` : '';
+      return `<div class="twr-emp${activePair?' active':''}" style="flex:1;min-width:200px;padding:8px;border:1px solid ${activePair?sigCol:'var(--border)'};border-radius:6px;background:${activePair?sigCol+'14':'rgba(255,255,255,0.02)'};position:relative;${activePair?`color:${sigCol};`:''}">
+        ${bubble}
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="background:#0b0f1a;border:1px solid ${e.face.accColor}66;border-radius:4px;padding:1px">${head}</span>
+          <span class="twr-head" style="display:inline-block;background:#0b0f1a;border:1px solid ${e.face.accColor}66;border-radius:4px;padding:1px">${head}</span>
           <div style="line-height:1.25;min-width:0">
             <div style="font-size:10px;color:var(--gold);font-weight:bold">${e.name}${activePair?` <span style="font-size:7px;color:var(--green)">🎯 ${activePair.replace('USD','')}</span>`:''}${!this._BUILTIN_EMP.includes(e.id)?` <span onclick="event.stopPropagation();Company.removeEmployee('${e.id}')" title="ปลด" style="cursor:pointer;color:var(--red);font-size:8px">✕</span>`:''}</div>
             <div style="font-size:6px;color:#9aa">${combo.icon} ${combo.name} · ${combo.agents.map(k=>this._KEYMAP[k]||k).join('+')}</div>
@@ -3134,7 +3197,7 @@ const Company = {
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bal = BotBridge?.lastStatus?.balance || Settings.get('accountSize', 30);
 
-    let html = this.liveScorecard() + this._presetBar() + this.renderEmployeeBoard();
+    let html = this.liveScorecard() + this._presetBar() + this.renderEmployeeBoard() + this.auditPanel();
     return html;
   },
 
