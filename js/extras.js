@@ -2956,6 +2956,17 @@ const Company = {
     if (typeof Company !== 'undefined') Company.refresh();
     if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
   },
+  // PHASE 25.4: wipe old test results (KB win-rates + audit) to test fresh
+  freshTest() {
+    if (!confirm('🧹 ล้างผลเทสเก่าทั้งหมด (KB win-rate จาก backtest + audit log) เพื่อเริ่มเทสใหม่?\n\n⚠️ หลังล้าง พนักงานจะ "ยังไม่ออกไม้" จนกว่าจะรัน Auto-Optimize ใหม่ให้ KB มีข้อมูล (เพราะเกณฑ์ต้องมี WR/R)')) return;
+    if (typeof AgentScores !== 'undefined' && AgentScores.reset) AgentScores.reset();
+    try { localStorage.removeItem('twr_audit'); } catch {}
+    this._lastTraderFire = {};
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', 'Strategy', '🧹 ล้างผลเทสเก่า — KB + audit รีเซ็ต เริ่มเทสใหม่');
+    alert('✅ ล้างผลเทสเก่าเรียบร้อย!\n\nขั้นต่อไป:\n1. เปิด BACKTEST → Start Auto-Opt 2-5 นาที (สร้าง win-rate ใหม่)\n2. กด STOP\n→ จากนั้นพนักงานถึงจะออกไม้ได้ตามผลใหม่');
+    if (typeof Company !== 'undefined') Company.refresh();
+    if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
+  },
   removeEmployee(empId) {
     if (this._BUILTIN_EMP.includes(empId)) { alert('พนักงานหลัก 6 คนลบไม่ได้'); return; }
     if (!confirm('ปลดพนักงานคนนี้?')) return;
@@ -3181,6 +3192,7 @@ const Company = {
     return `<div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--gold);font-weight:bold;margin-bottom:4px">👔 EMPLOYEE BOARD — ${this.EMPLOYEES.length} พนักงาน (1 คอมโบ/คน · แข่งกันออกซิก)
         <button onclick="Company.addCombo()" class="btn btn-secondary" style="font-size:7px;padding:2px 8px;margin-left:8px">+ จ้างพนักงาน/คอมโบใหม่</button>
+        <button onclick="Company.freshTest()" class="btn" style="font-size:7px;padding:2px 8px;margin-left:4px;background:var(--orange);color:#000">🧹 ล้างผลเทส เริ่มใหม่</button>
       </div>
       <div style="font-size:7px;padding:4px 6px;background:rgba(0,255,200,0.05);border:1px solid var(--teal);border-radius:5px;margin-bottom:6px">🎯 รอบนี้ใครได้คุม: ${wBanner}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${cards}</div>
