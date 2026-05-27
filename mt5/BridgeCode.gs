@@ -37,6 +37,10 @@ function doPost(e) {
       let trades;
       try { trades = JSON.parse(props.getProperty('LIVE_TRADES') || '[]'); }
       catch (e) { trades = []; }
+      // Phase 18: dedupe — skip if this posId already recorded
+      if (data.posId && trades.some(function(t){ return String(t.posId) === String(data.posId); })) {
+        return json({ ok: true, msg: 'duplicate skipped', count: trades.length });
+      }
       trades.unshift({
         sym:       data.sym,
         side:      data.side,

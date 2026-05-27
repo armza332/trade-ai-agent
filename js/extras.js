@@ -2119,7 +2119,25 @@ const Office = {
           ${BotBridge?.lossStreak>=3?` · <span style="color:var(--red)">⚠️ แพ้ ${BotBridge.lossStreak} ติด</span>`:''}
         </div>
       </div>
+
+      <!-- footer nav -->
+      <div style="padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid #2a3550;background:#0d1320">
+        <button class="btn btn-primary" style="font-size:9px;padding:6px 14px" onclick="Modal.close()">📊 เข้า Dashboard (กราฟเต็ม)</button>
+        <button class="btn btn-secondary" style="font-size:9px;padding:6px 12px" onclick="Modal.open('company')">📋 Company</button>
+        <button class="btn btn-secondary" style="font-size:9px;padding:6px 12px" onclick="Modal.open('botstatus')">🤖 BOT</button>
+        <button class="btn btn-secondary" style="font-size:9px;padding:6px 12px" onclick="Modal.open('journal')">📓 Journal</button>
+        <button class="btn ${Settings.get('homeView','dashboard')==='office'?'btn-primary':'btn-secondary'}" style="font-size:9px;padding:6px 12px;margin-left:auto"
+          onclick="Office.toggleHome()">
+          ${Settings.get('homeView','dashboard')==='office'?'🏠 หน้าแรก = Office ✓':'🏠 ตั้ง Office เป็นหน้าแรก'}
+        </button>
+      </div>
     `;
+  },
+
+  toggleHome() {
+    const cur = Settings.get('homeView', 'dashboard');
+    Settings.set('homeView', cur === 'office' ? 'dashboard' : 'office');
+    this.refresh();
   },
 };
 window.Office = Office;

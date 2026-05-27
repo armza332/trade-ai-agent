@@ -400,4 +400,8 @@ const TradingWarRoom = {
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof I18n !== 'undefined') I18n.init();
   TradingWarRoom.init();
+  // Phase 18: open Office as landing if user set it as home
+  if (typeof Settings !== 'undefined' && Settings.get('homeView', 'dashboard') === 'office') {
+    setTimeout(() => { if (typeof Modal !== 'undefined') Modal.open('office'); }, 800);
+  }
 });
