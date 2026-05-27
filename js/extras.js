@@ -2065,26 +2065,39 @@ const Office = {
     if (el) el.innerHTML = this.render();
   },
 
-  // a desk character tile
-  _char(face, name, role, sig, onclick, glow) {
+  // pixel-head spec per office role (no emoji)
+  _faces: {
+    ceo:        { skin:'#e9b48c', hair:'#2a2a2a', style:'short', acc:'tie',     accColor:'#c0392b' },
+    sec:        { skin:'#f0c8a0', hair:'#7a4a1a', style:'long',  acc:'headset', accColor:'#ff66cc' },
+    xau:        { skin:'#e9b48c', hair:'#101015', style:'bun',   acc:'headband',accColor:'#ffd700' },
+    aud:        { skin:'#e9b48c', hair:'#3a2a1a', style:'spiky', acc:'headband',accColor:'#00ccff' },
+    eur:        { skin:'#e9b48c', hair:'#4a3a2a', style:'short', acc:'visor',   accColor:'#4169e1' },
+    strategy:   { skin:'#e3c9a0', hair:'#888',    style:'short', acc:'glasses', accColor:'#a060ff' },
+    accountant: { skin:'#e9b48c', hair:'#2a2a3a', style:'short', acc:'glasses', accColor:'#2ecc71' },
+    dev:        { skin:'#e9b48c', hair:'#1f1f1f', style:'short', acc:'headset', accColor:'#7fff00' },
+    claude:     { skin:'#cdd6e0', hair:'#88a',    style:'short', acc:'robot',   accColor:'#00e5ff' },
+  },
+
+  // a desk character tile (pixel head)
+  _char(faceKey, name, role, sig, onclick, glow) {
     const sigCol = sig === 'buy' ? '#00ff41' : sig === 'sell' ? '#ff3333'
-                 : sig === 'watch' ? '#ff8c00' : sig === 'online' ? '#00ffc8' : '#888';
-    const speech = sig === 'buy' ? 'BUY!' : sig === 'sell' ? 'SELL!' : sig === 'watch' ? 'watching...' : '';
+                 : sig === 'watch' ? '#ff8c00' : sig === 'online' ? '#00ffc8' : '#7a8aa0';
+    const speech = sig === 'buy' ? 'BUY!' : sig === 'sell' ? 'SELL!' : sig === 'watch' ? '...' : '';
+    const spec = this._faces[faceKey] || this._faces.dev;
+    const head = (window.UI && UI.pixelFace) ? UI.pixelFace(spec, 40) : '';
     return `
-      <div onclick="${onclick}" title="คลิกดู ${name}" style="
+      <div onclick="${onclick}" title="คลิกดู ${name}" class="office-char" style="
         cursor:pointer;position:relative;text-align:center;
-        padding:10px 8px;border:2px solid ${glow?sigCol:'#2a3550'};border-radius:8px;
-        background:linear-gradient(180deg, ${sigCol}18 0%, rgba(20,28,45,0.9) 70%);
-        transition:transform .15s, box-shadow .15s;
-        ${glow?`box-shadow:0 0 12px ${sigCol}66`:''}"
-        onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 6px 16px ${sigCol}88'"
-        onmouseout="this.style.transform='';this.style.boxShadow='${glow?`0 0 12px ${sigCol}66`:'none'}'">
-        ${speech ? `<div style="position:absolute;top:-10px;right:-4px;background:${sigCol};color:#000;font-size:7px;padding:2px 5px;border-radius:6px 6px 6px 0;font-weight:bold">${speech}</div>` : ''}
-        <div style="font-size:34px;line-height:1;filter:drop-shadow(2px 2px 0 #000)">${face}</div>
-        <div style="margin-top:4px;font-size:9px;color:#fff;font-weight:bold">${name}</div>
-        <div style="font-size:6px;color:${sigCol}">${role}</div>
-        <!-- desk -->
-        <div style="margin-top:5px;height:5px;background:linear-gradient(90deg,#4a3520,#6b4e30,#4a3520);border-radius:2px"></div>
+        padding:9px 6px 7px;border:2px solid ${glow?sigCol:'#243049'};border-radius:9px;
+        background:linear-gradient(180deg, ${sigCol}14 0%, rgba(16,22,38,0.95) 64%);
+        transition:transform .12s, box-shadow .12s;
+        ${glow?`box-shadow:0 0 10px ${sigCol}55`:''}"
+        onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 6px 14px ${sigCol}88'"
+        onmouseout="this.style.transform='';this.style.boxShadow='${glow?`0 0 10px ${sigCol}55`:'none'}'">
+        ${speech ? `<div style="position:absolute;top:-9px;right:-3px;background:${sigCol};color:#000;font-size:7px;padding:1px 5px;border-radius:6px 6px 6px 0;font-weight:bold">${speech}</div>` : ''}
+        <div style="display:inline-block;background:#0b0f1a;border:1px solid ${sigCol}55;border-radius:5px;padding:2px;box-shadow:0 0 8px ${sigCol}44">${head}</div>
+        <div style="margin-top:4px;font-size:9px;color:#fff;font-weight:bold;letter-spacing:.3px">${name}</div>
+        <div style="font-size:6.5px;color:${sigCol};margin-top:1px">${role}</div>
       </div>`;
   },
 
@@ -2113,10 +2126,13 @@ const Office = {
         </div>
       </div>
 
-      <!-- office floor: window strip -->
-      <div style="height:36px;background:linear-gradient(180deg,#1a2640,#0d1525);border-bottom:1px solid #2a3550;display:flex;align-items:center;justify-content:center;gap:6px">
-        ${['🌆','🪟','🌆','🪟','🌆','🪟','🌆'].map(w=>`<span style="font-size:18px;opacity:0.5">${w}</span>`).join('')}
-        <span style="position:absolute;font-size:9px;color:#445;letter-spacing:3px">— EAT · SLEEP · TRADE · REPEAT —</span>
+      <!-- office floor: pixel window wall (city skyline behind glass) -->
+      <div style="position:relative;height:40px;background:linear-gradient(180deg,#0e1830 0%,#14223e 100%);border-bottom:3px solid #243049;overflow:hidden">
+        <div style="position:absolute;inset:0;display:flex;align-items:flex-end;gap:5px;padding:0 14px;opacity:.6">
+          ${[14,22,10,28,18,24,12,30,16,26,20,14].map((h,i)=>`<div style="flex:1;height:${h}px;background:linear-gradient(180deg,#2a3e66,#16233f);box-shadow:inset 0 2px 0 #3a527f"></div>`).join('')}
+        </div>
+        <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 70px,#243049 70px 73px)"></div>
+        <span style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);font-size:8px;color:#5a7099;letter-spacing:3px">EAT · SLEEP · TRADE · REPEAT</span>
       </div>
 
       <!-- room -->
@@ -2124,25 +2140,25 @@ const Office = {
 
         <!-- Executive row -->
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:420px;margin:0 auto 14px">
-          ${this._char('👔','CEO (คุณ)','Boss · click=Company','online',"Modal.open('company')",true)}
-          ${this._char('📋','Janie','เลขา · คุยได้','online',"Modal.open('company')",true)}
+          ${this._char('ceo','CEO (คุณ)','Boss · click=Company','online',"Modal.open('company')",true)}
+          ${this._char('sec','Janie','เลขา · คุยได้','online',"Modal.open('company')",true)}
         </div>
 
         <!-- Trade desk row -->
         <div style="font-size:8px;color:var(--gold);text-align:center;margin-bottom:6px">📈 TRADE DESK</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-          ${this._char('🥷','XAU Trader','ทอง',sig(gold),"Modal.open('company')",sig(gold)==='buy'||sig(gold)==='sell')}
-          ${this._char('🏹','AUD Trader','ออส',sig(fx?.aud),"Modal.open('company')",sig(fx?.aud)==='buy'||sig(fx?.aud)==='sell')}
-          ${this._char('⚔️','EUR Trader','ยูโร',sig(fx?.eur),"Modal.open('company')",sig(fx?.eur)==='buy'||sig(fx?.eur)==='sell')}
+          ${this._char('xau','XAU Trader','ทอง',sig(gold),"Modal.open('company')",sig(gold)==='buy'||sig(gold)==='sell')}
+          ${this._char('aud','AUD Trader','ออส',sig(fx?.aud),"Modal.open('company')",sig(fx?.aud)==='buy'||sig(fx?.aud)==='sell')}
+          ${this._char('eur','EUR Trader','ยูโร',sig(fx?.eur),"Modal.open('company')",sig(fx?.eur)==='buy'||sig(fx?.eur)==='sell')}
         </div>
 
         <!-- Support staff row -->
         <div style="font-size:8px;color:var(--purple);text-align:center;margin-bottom:6px">🏛 SUPPORT</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-          ${this._char('🧠','Strategy','KB · click=Journal','online',"Modal.open('journal')",false)}
-          ${this._char('📊','Accountant','P&L · click=BOT','online',"Modal.open('botstatus')",false)}
-          ${this._char('💻','Dev','Health','online',"Modal.open('botstatus')",false)}
-          ${this._char('🤖','Claude','Advisor','online',"Modal.open('company')",false)}
+          ${this._char('strategy','Strategy','KB · click=Journal','online',"Modal.open('journal')",false)}
+          ${this._char('accountant','Accountant','P&L · click=BOT','online',"Modal.open('botstatus')",false)}
+          ${this._char('dev','Dev','Health','online',"Modal.open('botstatus')",false)}
+          ${this._char('claude','Claude','Advisor','online',"Modal.open('company')",false)}
         </div>
       </div>
 
@@ -2470,11 +2486,14 @@ const Company = {
   },
 
   // Consolidate a team report into a single "Trader" persona
-  _traderCard(sym, teamData, face, name) {
+  _traderCard(sym, teamData, faceKey, name) {
+    const spec = (window.Office && Office._faces[faceKey]) || (window.Office && Office._faces.dev);
+    const head = (window.UI && UI.pixelFace) ? UI.pixelFace(spec, 34) : '';
+    const headBox = `<span style="display:inline-block;background:#0b0f1a;border:1px solid #2a3550;border-radius:5px;padding:2px">${head}</span>`;
     if (!teamData) {
       return `<div style="flex:1;padding:8px;border:1px solid var(--border);opacity:0.5">
-        <div style="font-size:8px">${face} ${name}</div>
-        <div style="font-size:6px;color:var(--gray)">— ยังไม่มีข้อมูล —</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:9px">${headBox}<span>${name}</span></div>
+        <div style="font-size:6px;color:var(--gray);margin-top:4px">— ยังไม่มีข้อมูล —</div>
       </div>`;
     }
     const sig  = teamData.signal || teamData.head?.signal || 'wait';
@@ -2510,7 +2529,7 @@ const Company = {
     return `
       <div style="flex:1;min-width:0;padding:10px;border:1px solid ${sigCol};background:rgba(255,255,255,0.02);border-radius:4px">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-          <span style="font-size:28px">${face}</span>
+          ${headBox}
           <div style="line-height:1.3">
             <div style="font-size:11px;color:var(--gold);font-weight:bold">${name}</div>
             <div style="font-size:7px;color:var(--gray)">${sym} Specialist</div>
@@ -2762,9 +2781,9 @@ const Company = {
       </div>` : ''}
       <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 3 Traders</div>
       <div style="display:flex;gap:8px;margin-bottom:12px">
-        ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
-        ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
-        ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
+        ${this._traderCard('XAUUSD', gold, 'xau', 'XAU Trader')}
+        ${this._traderCard('AUDUSD', fx?.aud, 'aud', 'AUD Trader')}
+        ${this._traderCard('EURUSD', fx?.eur, 'eur', 'EUR Trader')}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div style="padding:10px;border:1px solid var(--purple);background:rgba(120,80,255,0.05);border-radius:4px">

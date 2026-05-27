@@ -36,55 +36,152 @@ const UI = {
     </div>`;
   },
 
-  // ── Pixel art profile lookup (Phase 14.1) ──
-  // Each agent has: emoji face, job title, mood per signal
-  _agentProfile(name) {
-    const t = (name || '').toUpperCase();
-    const profiles = {
-      'SMC':        { face: '🧐', title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC' },
-      'SMC ANALYST':{ face: '🧐', title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC' },
-      'ELLIOTT':    { face: '🧙', title: 'Wave Master',      bg: '#00ffff', short: 'EW'  },
-      'ELLIOTT WAVE':{face: '🧙', title: 'Wave Master',      bg: '#00ffff', short: 'EW'  },
-      'FIBONACCI':  { face: '👨‍🏫', title: 'Geometry Sensei', bg: '#ffd700', short: 'FIB' },
-      'FIB':        { face: '👨‍🏫', title: 'Geometry Sensei', bg: '#ffd700', short: 'FIB' },
-      'RSI':        { face: '🏃', title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI' },
-      'RSI / VALUE':{ face: '🏃', title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI' },
-      'MACD':       { face: '👨‍🚀', title: 'Trend Pilot',     bg: '#7fff00', short: 'MCD' },
-      'BOLLINGER':  { face: '🧜', title: 'Volatility Diver', bg: '#1e90ff', short: 'BB'  },
-      'PIVOT':      { face: '🏛', title: 'S/R Architect',    bg: '#a0522d', short: 'PVT' },
-      'PATTERN':    { face: '🕯', title: 'Candle Reader',    bg: '#ff6347', short: 'PTN' },
-      'DIVERGENCE': { face: '🕵', title: 'Reversal Hunter',  bg: '#9370db', short: 'DIV' },
-      'MULTI-TF':   { face: '🧝', title: 'Time Sage',        bg: '#20b2aa', short: 'MTF' },
-      'ICHIMOKU':   { face: '🥷', title: 'Cloud Samurai',    bg: '#dc143c', short: 'ICH' },
-      'DXY':        { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
-      'DXY (USD)':  { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
-      'UT-BOT':     { face: '🎯', title: 'Trend Sniper',     bg: '#00ced1', short: 'UT' },
-      'ORDER BLOCK':{ face: '🧱', title: 'Zone Mason',       bg: '#8b4513', short: 'OB' },
-      'LIQ SWEEP':  { face: '💧', title: 'Liquidity Hunter', bg: '#1e90ff', short: 'SWP' },
-      'BREAKOUT':   { face: '🚀', title: 'Breakout Pilot',   bg: '#ff4500', short: 'BRK' },
-      'FAIR VALUE GAP':{ face: '🟦', title: 'Gap Filler',    bg: '#4169e1', short: 'FVG' },
-      'FVG':        { face: '🟦', title: 'Gap Filler',       bg: '#4169e1', short: 'FVG' },
-      'NEWS':       { face: '📺', title: 'News Anchor',      bg: '#ff1493', short: 'NWS' },
-    };
-    return profiles[t] || { face: '👤', title: 'Analyst', bg: '#888', short: t.slice(0,3) };
+  // ═══════════════════════════════════════════════════════
+  //  PIXEL-ART HUMAN HEAD GENERATOR (Phase 20)
+  //  Builds a crisp SVG pixel portrait from a small spec.
+  //  No emoji — every character is a drawn 12×12 pixel face.
+  // ═══════════════════════════════════════════════════════
+  _shade(hex, amt = -28) {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    const cl = v => Math.max(0, Math.min(255, v));
+    const r = cl((n >> 16) + amt), g = cl(((n >> 8) & 255) + amt), b = cl((n & 255) + amt);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
   },
 
-  // ── Pixel-art ID badge avatar ──
+  // spec: { skin, hair, eye, style, acc, accColor, mouth }
+  //   style : short | long | bun | spiky | bald | flat
+  //   acc   : none | glasses | visor | headband | tie | crown | robot | headset
+  pixelFace(spec = {}, size = 32) {
+    const skin   = spec.skin   || '#e9b48c';
+    const skinSh = this._shade(skin, -30);
+    const hair   = spec.hair   || '#3a2a1a';
+    const hairHi = this._shade(hair, 28);
+    const eye    = spec.eye    || '#20222e';
+    const acc    = spec.acc    || 'none';
+    const accCol = spec.accColor || '#222';
+    const style  = spec.style  || 'short';
+    const P = [];
+    const R = (x, y, w, h, c) => P.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${c}"/>`);
+
+    // ── ROBOT head (Claude / Dev-bot) ──
+    if (acc === 'robot') {
+      R(3, 5, 2, 1, accCol);            // antenna pole
+      R(3, 4, 2, 1, this._shade(accCol, 60));
+      R(2, 6, 8, 6, this._shade(skin, 10)); // metal face
+      R(2, 6, 8, 1, hairHi);            // top highlight
+      R(3, 8, 2, 2, eye); R(7, 8, 2, 2, eye); // LED eyes
+      R(3, 8, 1, 1, '#7fffd4'); R(7, 8, 1, 1, '#7fffd4');
+      R(4, 11, 4, 1, this._shade(skin, -20)); // mouth grille
+      return this._wrapSVG(P, size);
+    }
+
+    // ── HAIR back layer (long) ──
+    if (style === 'long') { R(2, 5, 1, 6, hair); R(9, 5, 1, 6, hair); }
+
+    // ── FACE ──
+    R(3, 3, 6, 7, skin);
+    R(2, 6, 1, 2, skin); R(9, 6, 1, 2, skin); // ears
+    R(3, 9, 6, 1, skinSh);                     // jaw shadow
+    R(5, 10, 2, 2, skinSh);                    // neck
+
+    // ── EYES ──
+    R(4, 6, 1, 1, eye); R(7, 6, 1, 1, eye);
+
+    // ── MOUTH / expression ──
+    const m = spec.mouth || 'smile';
+    if (m === 'smile') { R(5, 8, 2, 1, skinSh); R(4, 7, 1, 1, skinSh); R(7, 7, 1, 1, skinSh); }
+    else if (m === 'flat') { R(5, 8, 2, 1, skinSh); }
+    else if (m === 'open') { R(5, 8, 2, 2, this._shade(skin, -55)); }
+
+    // ── HAIR top ──
+    if (style !== 'bald') {
+      R(3, 2, 6, 2, hair);          // cap
+      R(3, 2, 6, 1, hairHi);        // shine
+      R(2, 3, 1, 3, hair); R(9, 3, 1, 3, hair); // sideburns
+      if (style === 'spiky') { R(3, 1, 1, 1, hair); R(5, 1, 1, 1, hair); R(7, 1, 1, 1, hair); R(8, 1, 1, 1, hair); }
+      if (style === 'bun')   { R(5, 0, 2, 2, hair); R(5, 0, 2, 1, hairHi); }
+      if (style === 'long')  { R(2, 5, 1, 5, hair); R(9, 5, 1, 5, hair); R(3, 9, 1, 1, hair); R(8, 9, 1, 1, hair); }
+    } else {
+      R(3, 3, 6, 1, hairHi); // bald top sheen
+    }
+
+    // ── ACCESSORIES ──
+    if (acc === 'glasses') {
+      R(3, 6, 3, 1, accCol); R(6, 6, 3, 1, accCol);
+      R(4, 6, 1, 1, '#9fe'); R(7, 6, 1, 1, '#9fe');
+      R(4, 6, 1, 1, eye); R(7, 6, 1, 1, eye);
+    } else if (acc === 'headband') {
+      R(2, 4, 8, 1, accCol); R(8, 4, 2, 1, accCol);
+      R(9, 4, 1, 3, this._shade(accCol, -20)); // knot tail
+    } else if (acc === 'visor') {
+      R(2, 5, 8, 1, accCol);
+      R(3, 6, 6, 1, this._shade(accCol, 50)); // tinted visor
+    } else if (acc === 'headset') {
+      R(2, 4, 8, 1, accCol);
+      R(1, 6, 1, 2, accCol); R(10, 6, 1, 2, accCol); // ear cups
+      R(1, 8, 3, 1, accCol); // mic boom
+    } else if (acc === 'crown') {
+      R(3, 1, 6, 1, '#ffd700'); R(3, 0, 1, 1, '#ffd700'); R(6, 0, 1, 1, '#ffd700'); R(8, 0, 1, 1, '#ffd700');
+    } else if (acc === 'tie') {
+      R(5, 10, 2, 1, '#fff'); R(5, 11, 2, 1, accCol); R(6, 10, 0.5, 2, this._shade(accCol, 40));
+    }
+    return this._wrapSVG(P, size);
+  },
+  _wrapSVG(parts, size) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 12 12" shape-rendering="crispEdges" style="display:block;image-rendering:pixelated">${parts.join('')}</svg>`;
+  },
+
+  // ── Per-agent profile: pixel-face spec + job title + accent color ──
+  _agentProfile(name) {
+    const t = (name || '').toUpperCase();
+    const S = (skin, hair, style, acc, accColor, eye) => ({ skin, hair, style, acc, accColor, eye });
+    const profiles = {
+      'SMC':        { title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC', face: S('#e9b48c','#2a2a3a','short','glasses','#ff00ff') },
+      'SMC ANALYST':{ title: 'Structure Chief',  bg: '#ff00ff', short: 'SMC', face: S('#e9b48c','#2a2a3a','short','glasses','#ff00ff') },
+      'ELLIOTT':    { title: 'Wave Master',      bg: '#00ffff', short: 'EW',  face: S('#e3c9a0','#cfe7ff','long','none','#00ffff') },
+      'ELLIOTT WAVE':{title: 'Wave Master',      bg: '#00ffff', short: 'EW',  face: S('#e3c9a0','#cfe7ff','long','none','#00ffff') },
+      'FIBONACCI':  { title: 'Geometry Sensei',  bg: '#ffd700', short: 'FIB', face: S('#d6a273','#4a3010','bald','glasses','#ffd700') },
+      'FIB':        { title: 'Geometry Sensei',  bg: '#ffd700', short: 'FIB', face: S('#d6a273','#4a3010','bald','glasses','#ffd700') },
+      'RSI':        { title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI', face: S('#e9b48c','#1f1f1f','spiky','headband','#ff8c00') },
+      'RSI / VALUE':{ title: 'Momentum Runner',  bg: '#ff8c00', short: 'RSI', face: S('#e9b48c','#1f1f1f','spiky','headband','#ff8c00') },
+      'MACD':       { title: 'Trend Pilot',      bg: '#7fff00', short: 'MCD', face: S('#e9b48c','#3a2a1a','short','headset','#7fff00') },
+      'BOLLINGER':  { title: 'Volatility Diver', bg: '#1e90ff', short: 'BB',  face: S('#e3c9a0','#1e90ff','spiky','visor','#1e90ff') },
+      'PIVOT':      { title: 'S/R Architect',    bg: '#a0522d', short: 'PVT', face: S('#cd9b6a','#5a3a1a','short','none','#a0522d') },
+      'PATTERN':    { title: 'Candle Reader',    bg: '#ff6347', short: 'PTN', face: S('#e9b48c','#7a1f1f','short','none','#ff6347') },
+      'DIVERGENCE': { title: 'Reversal Hunter',  bg: '#9370db', short: 'DIV', face: S('#e9b48c','#3a2a4a','short','glasses','#9370db') },
+      'MULTI-TF':   { title: 'Time Sage',        bg: '#20b2aa', short: 'MTF', face: S('#e3c9a0','#c0c0c0','long','none','#20b2aa') },
+      'ICHIMOKU':   { title: 'Cloud Samurai',    bg: '#dc143c', short: 'ICH', face: S('#e9b48c','#101015','bun','headband','#dc143c') },
+      'DXY':        { title: 'USD Banker',       bg: '#228b22', short: 'DXY', face: S('#e9b48c','#2a2a2a','short','tie','#228b22') },
+      'DXY (USD)':  { title: 'USD Banker',       bg: '#228b22', short: 'DXY', face: S('#e9b48c','#2a2a2a','short','tie','#228b22') },
+      'UT-BOT':     { title: 'Trend Sniper',     bg: '#00ced1', short: 'UT',  face: S('#e9b48c','#1f1f1f','short','visor','#00ced1') },
+      'ORDER BLOCK':{ title: 'Zone Mason',       bg: '#8b4513', short: 'OB',  face: S('#cd9b6a','#3a2410','short','none','#8b4513') },
+      'LIQ SWEEP':  { title: 'Liquidity Hunter', bg: '#1e90ff', short: 'SWP', face: S('#e9b48c','#103a5a','short','headband','#1e90ff') },
+      'BREAKOUT':   { title: 'Breakout Pilot',   bg: '#ff4500', short: 'BRK', face: S('#e9b48c','#3a2a1a','spiky','headset','#ff4500') },
+      'FAIR VALUE GAP':{ title: 'Gap Filler',    bg: '#4169e1', short: 'FVG', face: S('#e3c9a0','#4169e1','short','glasses','#4169e1') },
+      'FVG':        { title: 'Gap Filler',       bg: '#4169e1', short: 'FVG', face: S('#e3c9a0','#4169e1','short','glasses','#4169e1') },
+      'NEWS':       { title: 'News Anchor',      bg: '#ff1493', short: 'NWS', face: S('#e9b48c','#2a2a3a','short','tie','#ff1493') },
+    };
+    return profiles[t] || { title: 'Analyst', bg: '#888', short: t.slice(0,3), face: { skin:'#e9b48c', hair:'#3a2a1a', style:'short', acc:'none' } };
+  },
+
+  // ── Pixel-art ID badge avatar (now a drawn human head) ──
   _avatarBadge(name, signal) {
     const p = this._agentProfile(name);
     const sigCol = signal === 'buy' ? '#00ff41' : signal === 'sell' ? '#ff3333' : signal === 'watch' ? '#ff8c00' : '#ffe600';
     return `
       <div class="agent-avatar" style="
-        display:inline-flex;align-items:center;gap:4px;
-        padding:3px 5px;
+        display:inline-flex;align-items:center;gap:5px;
+        padding:3px 6px 3px 3px;
         background:linear-gradient(135deg, ${p.bg}33 0%, ${p.bg}11 100%);
         border:1px solid ${p.bg}88;
         border-left:3px solid ${sigCol};
-        image-rendering:pixelated">
-        <span style="font-size:14px;line-height:1;filter:drop-shadow(1px 1px 0 #000);text-shadow:0 0 2px #000">${p.face}</span>
-        <div style="display:flex;flex-direction:column;line-height:1.1">
-          <span style="font-size:6px;color:${p.bg};font-weight:bold;letter-spacing:0.5px">[${p.short}]</span>
-          <span style="font-size:5px;color:#aaa;font-style:italic">${p.title}</span>
+        border-radius:4px">
+        <span style="background:#0b0f1a;border:1px solid ${p.bg}55;border-radius:3px;padding:1px;box-shadow:0 0 6px ${sigCol}55">${this.pixelFace(p.face, 24)}</span>
+        <div style="display:flex;flex-direction:column;line-height:1.15">
+          <span style="font-size:7px;color:${p.bg};font-weight:bold;letter-spacing:0.5px">[${p.short}]</span>
+          <span style="font-size:6px;color:#9aa;font-style:italic">${p.title}</span>
         </div>
       </div>`;
   },

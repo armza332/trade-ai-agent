@@ -451,8 +451,23 @@ const AutoOptimize = {
   history:   [],    // all runs
   log:       [],
 
+  // Phase 20: warn before refresh/close while optimizing (KB itself is saved
+  // per-trade, but in-progress cycles would be lost on reload).
+  _installUnloadGuard() {
+    if (this._guardInstalled) return;
+    this._guardInstalled = true;
+    window.addEventListener('beforeunload', (e) => {
+      if (AutoOptimize.running || (window.Backtest && Backtest.running)) {
+        e.preventDefault();
+        e.returnValue = 'กำลัง Backtest/Auto-Optimize อยู่ — KB เซฟแล้วทุกไม้ แต่รอบที่กำลังรันจะหยุด ถ้ารีเฟรช';
+        return e.returnValue;
+      }
+    });
+  },
+
   async start(opts = {}) {
     if (this.running) return;
+    this._installUnloadGuard();
     this.running = true;
     this.startTs = Date.now();
     this.cycles = 0;
