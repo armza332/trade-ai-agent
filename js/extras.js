@@ -2621,6 +2621,46 @@ const Company = {
     return { signal, conf, buy, sell, n };
   },
 
+  // ── PHASE 21: one-click strategy presets ──
+  PRESETS: {
+    gold_sd_scalp: { label:'🥇 Gold S/D Scalp', who:'Aurum',  syms:['XAUUSD'], agents:['orderblock','fvg','sweep','utbot'], mode:'scalp', tf:'M5' },
+    gold_meanrev:  { label:'🥇 Gold Mean-Rev',  who:'Goldie', syms:['XAUUSD'], agents:['rsi','bollinger','fib','divergence'], mode:'swing', tf:'M15' },
+    aud_trend:     { label:'🇦🇺 AUD Trend',      who:'Matilda',syms:['AUDUSD'], agents:['utbot','macd','mtf','ichimoku'], mode:'swing', tf:'H1' },
+    eur_breakout:  { label:'🇪🇺 EUR Breakout',   who:'Hans',   syms:['EURUSD'], agents:['breakout','utbot','macd','sweep'], mode:'scalp', tf:'M5' },
+  },
+  _SETKEY: { orderblock:'OrderBlock', fvg:'FVG', sweep:'Sweep', utbot:'UTBot', rsi:'RSI',
+    bollinger:'Bollinger', fib:'Fib', divergence:'Divergence', macd:'MACD', breakout:'Breakout',
+    ichimoku:'Ichimoku', elliott:'Elliott', smc:'SMC', pattern:'Pattern', mtf:'MTF', dxy:'DXY', news:'News' },
+  applyPreset(key) {
+    const p = this.PRESETS[key];
+    if (!p || typeof Settings === 'undefined') return;
+    if (!confirm(`ใช้ preset "${p.label}" (สไตล์ ${p.who})?\n\nเปิดคู่: ${p.syms.join(', ')}\nเทคนิค: ${p.agents.join(', ')}\nโหมด: ${p.mode} (EA TF = ${p.tf})\n\n⚠️ จะปิด agent อื่น + คู่เงินอื่นชั่วคราว`)) return;
+    // symbols
+    Settings.set('enableXAU', p.syms.includes('XAUUSD'));
+    Settings.set('enableAUD', p.syms.includes('AUDUSD'));
+    Settings.set('enableEUR', p.syms.includes('EURUSD'));
+    // agents — only this preset's kit on (+MTF kept for bias)
+    const ALL = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','FVG','News'];
+    const on = p.agents.map(a => this._SETKEY[a]);
+    ALL.forEach(name => Settings.set('enable' + name, on.includes(name) || name === 'MTF'));
+    Settings.set('tradeMode', p.mode);
+    Settings.set('minGrade', 'A');
+    Settings.set('riskPerTrade', Math.min(2, Settings.get('riskPerTrade', 2)));
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', 'Strategy', `⚡ Preset: ${p.label} (${p.who})`);
+    alert(`✅ ใช้ ${p.label} แล้ว\n\n📌 อย่าลืมตั้งใน MT5: ScalpMode=true, ScalpTF=${p.tf}\nระบบจะส่งสัญญาณเฉพาะคู่ ${p.syms.join(',')} เกรด A+ ไป EA`);
+    if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
+    if (typeof Company !== 'undefined') Company.refresh();
+  },
+  _presetBar() {
+    const btns = Object.keys(this.PRESETS).map(k =>
+      `<button onclick="Company.applyPreset('${k}')" class="btn btn-secondary" style="font-size:7px;padding:3px 7px">${this.PRESETS[k].label}</button>`
+    ).join('');
+    return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:5px 7px;background:rgba(255,215,0,0.05);border:1px dashed var(--gold);border-radius:5px">
+      <span style="font-size:7px;color:var(--gold);font-weight:bold">⚡ PRESET เทคนิค:</span>${btns}
+      <span style="font-size:6px;color:#778;margin-left:auto">กดเพื่อให้ทั้งทีมใช้สไตล์เทรดเดอร์คนนั้น</span>
+    </div>`;
+  },
+
   // Pick which trader presses the order for a pair
   _pickPresser(traders) {
     let best = null, bestScore = -1e9;
@@ -2648,7 +2688,7 @@ const Company = {
     });
 
     const symMeta = { XAUUSD:{n:'🥇 GOLD DESK',c:'var(--gold)'}, AUDUSD:{n:'🇦🇺 AUD DESK',c:'#00ccff'}, EURUSD:{n:'🇪🇺 EUR DESK',c:'#4169e1'} };
-    let html = '';
+    let html = this._presetBar();
     Object.keys(groups).forEach(sym => {
       const traders = groups[sym];
       const presserId = this._pickPresser(traders);
