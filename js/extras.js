@@ -2698,23 +2698,31 @@ const Company = {
   // PHASE 21.5: pick the best technique-combo for a pair straight from KB
   // (ranked by avgR = R / trades). Adapts automatically as KB grows.
   bestKitFor(sym) {
-    const fb = sym === 'XAUUSD' ? ['bollinger','utbot','fib','rsi']
-             : sym === 'AUDUSD' ? ['fib','elliott','utbot','rsi']
-             :                    ['bollinger','utbot','fib','elliott'];
+    // Stable anchor trio (proven positive across pairs): Bollinger + UT-Bot + RSI
+    const fb = sym === 'XAUUSD' ? ['bollinger','utbot','rsi']
+             : sym === 'AUDUSD' ? ['bollinger','utbot','rsi','sweep']
+             :                    ['utbot','bollinger','rsi','pattern'];
     if (typeof AgentScores === 'undefined') return { kit: fb, skills: [] };
     const kb = AgentScores.load();
     const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
     const short2key = {};
     Object.entries(this._KEYMAP).forEach(([k, s]) => short2key[s.toLowerCase()] = k);
+    // Phase 22.2: blacklist structurally-noisy / chronic-loser agents.
+    // These either flip sign between runs (DXY, Fib) or are consistently
+    // negative across the whole KB (News, SMC, OrderBlock, MACD, Ichimoku,
+    // Breakout, Pivot) — excluding them keeps the kit STABLE.
+    const BLACKLIST = new Set(['dxy','news','smc','orderblock','macd','ichimoku','breakout','pivot','fib','fvg']);
     const cand = [];
     Object.entries(kb.agents).forEach(([name, a]) => {
       if (!name.startsWith(prefix + '-')) return;
       const short = name.split('-').slice(1).join('-');
       const key = short2key[short.toLowerCase()];
-      if (!key || key === 'mtf' || key === 'news') return;
+      if (!key || key === 'mtf' || key === 'news' || BLACKLIST.has(key)) return;
       const b = a['sym_' + sym] || a.all;
-      if (!b || b.t < 20 || b.R <= 0) return;
-      cand.push({ key, short, R: b.R, t: b.t, avgR: b.R / b.t, acc: Math.round(b.w / b.t * 100) });
+      if (!b || b.t < 30) return;
+      const avgR = b.R / b.t;
+      if (avgR <= 0.05) return;   // need a real (if small) edge
+      cand.push({ key, short, R: b.R, t: b.t, avgR, acc: Math.round(b.w / b.t * 100) });
     });
     cand.sort((x, y) => y.avgR - x.avgR);
     const top = cand.slice(0, 4);
