@@ -2695,38 +2695,43 @@ const Company = {
     return best;
   },
 
-  // PHASE 21.5: pick the best technique-combo for a pair straight from KB
-  // (ranked by avgR = R / trades). Adapts automatically as KB grows.
+  // PHASE 22.3: STABLE FIXED CORE + rare KB override.
+  // The backtest KB on synthetic data is noisy (rankings flip between runs),
+  // so we anchor on a fixed, theory-grounded core per pair and ONLY swap in
+  // a KB agent if it shows a HUGE, unmistakable edge (avgR > 0.30). This stops
+  // the strategy from flip-flopping on noise.
   bestKitFor(sym) {
-    // Stable anchor trio (proven positive across pairs): Bollinger + UT-Bot + RSI
-    const fb = sym === 'XAUUSD' ? ['bollinger','utbot','rsi']
-             : sym === 'AUDUSD' ? ['bollinger','utbot','rsi','sweep']
-             :                    ['utbot','bollinger','rsi','pattern'];
-    if (typeof AgentScores === 'undefined') return { kit: fb, skills: [] };
+    // Fixed core: mean-reversion (Bollinger) + trend (UT-Bot) + momentum (RSI)
+    const core = sym === 'XAUUSD' ? ['bollinger','utbot','rsi']
+               : sym === 'AUDUSD' ? ['rsi','bollinger','utbot','sweep']
+               :                    ['rsi','bollinger','utbot','sweep'];
+    if (typeof AgentScores === 'undefined') return { kit: core, skills: [] };
     const kb = AgentScores.load();
     const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
     const short2key = {};
     Object.entries(this._KEYMAP).forEach(([k, s]) => short2key[s.toLowerCase()] = k);
-    // Phase 22.2: blacklist structurally-noisy / chronic-loser agents.
-    // These either flip sign between runs (DXY, Fib) or are consistently
-    // negative across the whole KB (News, SMC, OrderBlock, MACD, Ichimoku,
-    // Breakout, Pivot) — excluding them keeps the kit STABLE.
     const BLACKLIST = new Set(['dxy','news','smc','orderblock','macd','ichimoku','breakout','pivot','fib','fvg']);
-    const cand = [];
+    const skills = [];
+    core.forEach(key => {
+      const short = (this._KEYMAP[key] || key);
+      const rec = kb.agents[prefix + '-' + short] || kb.agents[prefix + '-' + short.toLowerCase()];
+      const b = rec && (rec['sym_' + sym] || rec.all);
+      skills.push(b && b.t > 0 ? { key, short, R: b.R, t: b.t, avgR: b.R / b.t, acc: Math.round(b.w / b.t * 100) }
+                              : { key, short, R: 0, t: 0, avgR: 0, acc: 0 });
+    });
+    // Only override: add a non-core agent with a HUGE edge (avgR>0.30, t>=50)
     Object.entries(kb.agents).forEach(([name, a]) => {
       if (!name.startsWith(prefix + '-')) return;
       const short = name.split('-').slice(1).join('-');
       const key = short2key[short.toLowerCase()];
-      if (!key || key === 'mtf' || key === 'news' || BLACKLIST.has(key)) return;
+      if (!key || core.includes(key) || BLACKLIST.has(key) || key === 'mtf' || key === 'news') return;
       const b = a['sym_' + sym] || a.all;
-      if (!b || b.t < 30) return;
+      if (!b || b.t < 50) return;
       const avgR = b.R / b.t;
-      if (avgR <= 0.05) return;   // need a real (if small) edge
-      cand.push({ key, short, R: b.R, t: b.t, avgR, acc: Math.round(b.w / b.t * 100) });
+      if (avgR > 0.30) skills.push({ key, short, R: b.R, t: b.t, avgR, acc: Math.round(b.w / b.t * 100) });
     });
-    cand.sort((x, y) => y.avgR - x.avgR);
-    const top = cand.slice(0, 4);
-    return { kit: top.length >= 2 ? top.map(c => c.key) : fb, skills: top };
+    const kit = skills.map(s => s.key).slice(0, 5);
+    return { kit, skills };
   },
 
   // 3 head traders — 1 per pair, kit auto-selected from KB
