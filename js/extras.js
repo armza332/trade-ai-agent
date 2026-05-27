@@ -2889,11 +2889,14 @@ const Company = {
     const kb = AgentScores.load();
     const live = kb.meta?.liveTrades || 0;
     const bt   = kb.meta?.backtestTrades || 0;
-    const stats = AgentScores.stats();
-    const sorted = [...stats].sort((a,b) => (b.R||0) - (a.R||0));
+    // stats() returns {total, totalR(string)} — normalize to numbers, ignore tiny samples
+    const stats = AgentScores.stats()
+      .map(a => ({ name: a.name, R: parseFloat(a.totalR) || 0, t: a.total || 0 }))
+      .filter(a => a.t >= 20);
+    const sorted = [...stats].sort((a,b) => b.R - a.R);
     const best = sorted.slice(0, 3);
     const worst = sorted.slice(-3).reverse();
-    const fmt = a => `${a.name} <b style="color:${a.R>0?'var(--green)':'var(--red)'}">${a.R>0?'+':''}${(a.R||0).toFixed(0)}R</b> (${a.t||0}t)`;
+    const fmt = a => `${a.name} <b style="color:${a.R>0?'var(--green)':'var(--red)'}">${a.R>0?'+':''}${a.R.toFixed(0)}R</b> (${Math.round(a.t)}t)`;
     const streak = BotBridge?.lossStreak || 0;
     const streakWarn = streak >= 3 ? `<div style="font-size:8px;color:var(--red);background:rgba(255,50,50,0.1);padding:4px 6px;margin-bottom:5px;border-left:2px solid var(--red)">
       ⚠️ แพ้ ${streak} ไม้ติด — ${streak>=5?'🛑 Auto-PAUSED':streak>=4?'🛡 ลด risk อัตโนมัติ':'เฝ้าระวัง'}</div>` : '';
