@@ -1499,8 +1499,8 @@ class Commander {
     // ── ADX gate: ในตลาด sideway (ADX ต่ำ) ลด confidence + ห้าม buy/sell signal ──
     const adxGate = (typeof Settings !== 'undefined') ? Settings.get('adxGate', 20) : 20;
     if (adxGate > 0) {
-      const goldADX = parseFloat((goldReport.agents.rsi.report.adx + '').split(' ')[0]) || 25;
-      const audADX  = parseFloat((currReport.aud?.agents?.rsi?.report.adx + '').split(' ')[0]) || 25;
+      const goldADX = parseFloat((goldReport.agents?.rsi?.report?.adx + '').split(' ')[0]) || 25;
+      const audADX  = parseFloat((currReport.aud?.agents?.rsi?.report?.adx + '').split(' ')[0]) || 25;
       if (goldADX < adxGate && (goldSig === 'buy' || goldSig === 'sell')) {
         goldSig = 'watch'; goldConf = Math.min(goldConf, 50);
       }
