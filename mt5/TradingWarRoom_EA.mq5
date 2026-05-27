@@ -79,6 +79,7 @@ input string  WatchXAU           = "XAUUSDm";     // XAU symbol for price feed (
 input int     CommandPollSec     = 15;            // Poll web commands every N seconds (Phase 12.4)
 input bool    AllowRemoteControl = true;          // Allow Close All / Pause from web (Phase 12.4)
 input bool    AcceptWebSignals   = false;         // 🧠 Phase 13: Accept AI trade signals from web (KB-guided)
+input bool    OnlyWebSignals     = false;         // 🎯 Phase 21.7: trade ONLY web signals (disable EA's own RSI+BB+Fib entries)
 
 //═══════════════════ GLOBALS ════════════════════════════════════════
 CTrade        trade;
@@ -329,6 +330,9 @@ void CheckSignal(string sym, int idx) {
    else                                         scanState[idx].tag = "SCAN";
 
    // ─── Trade execution (only if cooldown + position allow) ───
+   // Phase 21.7: if OnlyWebSignals, the EA never opens its own trades —
+   // it waits for high-confidence signals from the web head-traders.
+   if (OnlyWebSignals) { scanState[idx].tag = "WEB-ONLY"; return; }
    if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) return;
    if (CountPositions(sym) >= effMaxPos) return;
 

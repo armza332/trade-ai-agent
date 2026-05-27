@@ -2656,13 +2656,22 @@ const Company = {
       `<button onclick="Company.applyPreset('${k}')" class="btn btn-secondary" style="font-size:7px;padding:3px 7px">${this.PRESETS[k].label}</button>`
     ).join('');
     const td = (typeof Settings !== 'undefined') && Settings.get('traderDrivenSignals', false);
+    const mc = (typeof Settings !== 'undefined') ? Settings.get('traderMinConf', 80) : 80;
+    const confBtns = [70,80,85,90].map(v =>
+      `<button onclick="Company.setTraderConf(${v})" class="btn ${mc===v?'btn-primary':'btn-secondary'}" style="font-size:7px;padding:2px 6px">${v}%</button>`
+    ).join('');
     return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:5px 7px;background:rgba(255,215,0,0.05);border:1px dashed var(--gold);border-radius:5px">
       <button onclick="Company.applyBestSpecialists()" class="btn btn-primary" style="font-size:8px;padding:4px 10px;font-weight:bold">🏆 ใช้ทีมหัวกระทิ (Best จาก KB)</button>
       <button onclick="Company.toggleTraderDriven()" class="btn ${td?'btn-primary':'btn-secondary'}" style="font-size:8px;padding:4px 10px">${td?'🎯 หัวหน้าโต๊ะยิงเอง: ON':'หัวหน้าโต๊ะยิงเอง: OFF'}</button>
-      <span style="font-size:7px;color:#778">|</span>
-      <span style="font-size:7px;color:var(--gold)">บังคับสไตล์:</span>${btns}
-      <span style="font-size:6px;color:#778;margin-left:auto">🎯 ON = แต่ละหัวหน้าโต๊ะยิงคู่ตัวเองอิสระ (แทน Commander) เมื่อมั่นใจ+KB เป็นบวก</span>
+      <span style="font-size:7px;color:var(--gold)">conf ขั้นต่ำ:</span>${confBtns}
+      <span style="font-size:7px;color:#778">|</span>${btns}
+      <span style="font-size:6px;color:#778;margin-left:auto">🎯 ON = หัวหน้าโต๊ะยิงคู่ตัวเองเมื่อ conf ≥ ${mc}% + KB เป็นบวก (ตอนนี้ ${mc}%)</span>
     </div>`;
+  },
+  setTraderConf(v) {
+    Settings.set('traderMinConf', v);
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD','Strategy',`🎯 ตั้ง conf ขั้นต่ำหัวหน้าโต๊ะ = ${v}% (ยิงเฉพาะสัญญาณมั่นใจสูง)`);
+    if (typeof Company !== 'undefined') Company.refresh();
   },
   toggleTraderDriven() {
     const on = !Settings.get('traderDrivenSignals', false);
@@ -2754,7 +2763,7 @@ const Company = {
     const teamFor = (sym) => sym === 'XAUUSD' ? goldR : sym === 'AUDUSD' ? fxR?.aud : fxR?.eur;
     const now = Date.now();
     const COOLDOWN = 15 * 60 * 1000;   // 15-min per-pair cooldown
-    const minConf = Settings.get('traderMinConf', 60);
+    const minConf = Settings.get('traderMinConf', 80);
     this._buildRoster().forEach(t => {
       const live = this._traderSignal(teamFor(t.sym), t.kit);
       if (live.signal !== 'buy' && live.signal !== 'sell') return;
