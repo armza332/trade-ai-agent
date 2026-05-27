@@ -592,11 +592,52 @@ string ProgressBar(double pct, int width) {
    return s;
 }
 
+// Phase 15.4: clickable on-chart button (AURA-style)
+void DashButton(string id, int x, int y, int w, int h, string text, color bg, color txtClr) {
+   string name = DASH_PFX + id;
+   if (ObjectFind(0, name) < 0) {
+      ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      ObjectSetString (0, name, OBJPROP_FONT, "Consolas Bold");
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, w);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, h);
+   ObjectSetString (0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, txtClr);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, name, OBJPROP_STATE, false);
+}
+
+// Phase 15.4: handle button clicks
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
+   if (id != CHARTEVENT_OBJECT_CLICK) return;
+   if (sparam == DASH_PFX + "BTN_STOP") {
+      eaPaused = true;
+      Print("⏸ DASHBOARD: EA paused via button");
+      ObjectSetInteger(0, DASH_PFX + "BTN_STOP", OBJPROP_STATE, false);
+   }
+   else if (sparam == DASH_PFX + "BTN_RESUME") {
+      eaPaused = false;
+      Print("▶️ DASHBOARD: EA resumed via button");
+      ObjectSetInteger(0, DASH_PFX + "BTN_RESUME", OBJPROP_STATE, false);
+   }
+   else if (sparam == DASH_PFX + "BTN_CLOSE") {
+      int n = CloseAllMyPositions();
+      Print("🔴 DASHBOARD: Close All → ", n, " positions");
+      ObjectSetInteger(0, DASH_PFX + "BTN_CLOSE", OBJPROP_STATE, false);
+   }
+}
+
 void UpdateDashboard() {
    int y = DASH_Y;
 
    // ── Outer panel ──
-   DashRect("PANEL", DASH_X, y, DASH_W, 280,
+   DashRect("PANEL", DASH_X, y, DASH_W, 330,
             C'10,15,25',           // bg: dark blue-black
             C'0,255,200',          // border: cyan
             2);
@@ -748,6 +789,13 @@ void UpdateDashboard() {
    string bar = ProgressBar(cdPct, 22);
    DashLabel("CD_BAR", DASH_X+16, y+4, "READY " + bar + " " + IntegerToString((int)(cdPct*100)) + "%",
              cdPct >= 1 ? C'0,255,100' : C'255,230,0', 8, "Consolas");
+
+   // ── Phase 15.4: AURA-style control buttons ──
+   y += 22;
+   int btnW = (DASH_W - 32) / 3;
+   DashButton("BTN_STOP",   DASH_X+12,             y, btnW-4, 22, "⏸ STOP",   C'180,60,60',  C'255,255,255');
+   DashButton("BTN_RESUME", DASH_X+12+btnW,        y, btnW-4, 22, "▶ RESUME", C'40,140,60',  C'255,255,255');
+   DashButton("BTN_CLOSE",  DASH_X+12+btnW*2,      y, btnW-4, 22, "✖ CLOSE",  C'200,50,50',  C'255,255,255');
 }
 
 // Cleanup dashboard objects on deinit

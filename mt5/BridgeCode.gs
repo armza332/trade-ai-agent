@@ -57,11 +57,14 @@ function doPost(e) {
       return json({ ok: true, msg: 'trade recorded', count: trades.length });
     }
 
-    // ── Phase 12.4: Web → EA command enqueue ──
+    // ── Phase 12.4 + 12.9 + 13: Web → EA command enqueue ──
     if (data.type === 'cmd') {
-      const allowed = ['close_all', 'pause', 'resume', 'reset_pnl'];
-      if (!allowed.includes(data.cmd)) {
-        return json({ ok: false, error: 'Unknown cmd' });
+      const base = ['close_all', 'pause', 'resume', 'reset_pnl'];
+      const c = String(data.cmd || '');
+      const isToggle = /^sym_[1-3]_(on|off)$/.test(c);            // Phase 12.9 per-symbol
+      const isAISig  = /^ai_(buy|sell)_[A-Za-z0-9]+$/.test(c);    // Phase 13 AI signals
+      if (!base.includes(c) && !isToggle && !isAISig) {
+        return json({ ok: false, error: 'Unknown cmd: ' + c });
       }
       const lastId = parseInt(props.getProperty('LAST_CMD_ID') || '0', 10);
       const newId  = lastId + 1;
