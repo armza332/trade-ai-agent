@@ -702,8 +702,12 @@ void UpdateDashboard() {
       string RBF = "   ";
 
       if (isTraded) {
+         // Phase 15.4 fix: if scanState not populated yet (before 1st new bar),
+         // run a fresh scan now so dashboard never shows (null)/RSI 0
+         if (scanState[i].lastScan == 0) CheckSignal(sym, i);
          rsi = scanState[i].rsi;
          sigTag = scanState[i].tag;
+         if (StringLen(sigTag) == 0) sigTag = "INIT";
 
          // R/B/F indicator: bright if condition met (use BUY side if BUY tag, SELL side if SELL)
          bool buyDir = (StringFind(sigTag, "BUY") >= 0);
