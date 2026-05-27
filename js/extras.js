@@ -2854,6 +2854,45 @@ const Company = {
     { id:'emp_wv', combo:'wave',        name:'Willa',  face:{skin:'#e3c9a0',hair:'#bfe0ff',style:'long', acc:'none',    accColor:'#00e5ff'} },
   ],
 
+  // ── PHASE 24.1: custom combos / employees (add your own, persisted) ──
+  _initCustom() {
+    if (this._customInited) return; this._customInited = true;
+    try { const cc = JSON.parse(localStorage.getItem('twr_custom_combos') || '{}'); Object.assign(this.COMBOS, cc); } catch {}
+    try {
+      const ce = JSON.parse(localStorage.getItem('twr_custom_employees') || '[]');
+      ce.forEach(e => { if (!this.EMPLOYEES.find(x => x.id === e.id)) this.EMPLOYEES.push(e); });
+    } catch {}
+  },
+  _BUILTIN_EMP: ['emp_mr','emp_tr','emp_sm','emp_bo','emp_rv','emp_wv'],
+  addCombo() {
+    const avail = Object.keys(this._KEYMAP).filter(k => k !== 'mtf');
+    const name = prompt('ชื่อคอมโบใหม่ (เช่น "Gold Scalp X"):'); if (!name) return;
+    const agentsStr = prompt('ใส่เทคนิค 2-4 ตัว คั่นด้วย , \nเลือกจาก: ' + avail.join(', '), 'bollinger,rsi,sweep');
+    if (!agentsStr) return;
+    const agents = agentsStr.split(',').map(s => s.trim().toLowerCase()).filter(k => avail.includes(k));
+    if (agents.length < 2) { alert('❌ ต้องมีอย่างน้อย 2 เทคนิคที่ถูกต้อง (พิมพ์ผิด?)'); return; }
+    const empName = prompt('ชื่อพนักงานที่จะถือคอมโบนี้:', name.slice(0, 8)); if (!empName) return;
+    const key = 'cmb_' + Date.now();
+    const combo = { name, icon: '⭐', agents, desc: 'คอมโบกำหนดเอง: ' + agents.map(a => this._KEYMAP[a]).join('+') };
+    this.COMBOS[key] = combo;
+    const palette = ['#ff66cc','#00e5ff','#7fff00','#ffd700','#ff4500','#9370db','#1e90ff'];
+    const emp = { id: 'emp_' + Date.now(), combo: key, name: empName,
+                  face: { skin:'#e9b48c', hair:'#3a2a1a', style:'short', acc:'glasses', accColor: palette[Math.floor(Math.random()*palette.length)] } };
+    this.EMPLOYEES.push(emp);
+    try { const cc = JSON.parse(localStorage.getItem('twr_custom_combos')||'{}'); cc[key] = combo; localStorage.setItem('twr_custom_combos', JSON.stringify(cc)); } catch {}
+    try { const ce = JSON.parse(localStorage.getItem('twr_custom_employees')||'[]'); ce.push(emp); localStorage.setItem('twr_custom_employees', JSON.stringify(ce)); } catch {}
+    alert(`✅ จ้างพนักงานใหม่: ${empName}\nคอมโบ: ${name} (${agents.map(a => this._KEYMAP[a]).join('+')})`);
+    if (typeof Company !== 'undefined') Company.refresh();
+    if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
+  },
+  removeEmployee(empId) {
+    if (this._BUILTIN_EMP.includes(empId)) { alert('พนักงานหลัก 6 คนลบไม่ได้'); return; }
+    if (!confirm('ปลดพนักงานคนนี้?')) return;
+    this.EMPLOYEES = this.EMPLOYEES.filter(e => e.id !== empId);
+    try { const ce = JSON.parse(localStorage.getItem('twr_custom_employees')||'[]').filter(e => e.id !== empId); localStorage.setItem('twr_custom_employees', JSON.stringify(ce)); } catch {}
+    if (typeof Company !== 'undefined') Company.refresh();
+  },
+
   // KB record for an arbitrary combo (agents) on a symbol
   _comboRecord(sym, agents) {
     const out = { w:0, l:0, R:0, total:0 };
@@ -2957,6 +2996,7 @@ const Company = {
   },
 
   renderEmployeeBoard() {
+    this._initCustom();
     const gold = TradingWarRoom?.lastGold, fx = TradingWarRoom?.lastFX;
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
@@ -2989,7 +3029,7 @@ const Company = {
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
           <span style="background:#0b0f1a;border:1px solid ${e.face.accColor}66;border-radius:4px;padding:1px">${head}</span>
           <div style="line-height:1.25;min-width:0">
-            <div style="font-size:10px;color:var(--gold);font-weight:bold">${e.name}${activePair?` <span style="font-size:7px;color:var(--green)">🎯 ${activePair.replace('USD','')}</span>`:''}</div>
+            <div style="font-size:10px;color:var(--gold);font-weight:bold">${e.name}${activePair?` <span style="font-size:7px;color:var(--green)">🎯 ${activePair.replace('USD','')}</span>`:''}${!this._BUILTIN_EMP.includes(e.id)?` <span onclick="event.stopPropagation();Company.removeEmployee('${e.id}')" title="ปลด" style="cursor:pointer;color:var(--red);font-size:8px">✕</span>`:''}</div>
             <div style="font-size:6px;color:#9aa">${combo.icon} ${combo.name} · ${combo.agents.map(k=>this._KEYMAP[k]||k).join('+')}</div>
           </div>
           <div style="margin-left:auto;text-align:right;flex:none">
@@ -3009,7 +3049,9 @@ const Company = {
     }).join('');
 
     return `<div style="margin-bottom:10px">
-      <div style="font-size:10px;color:var(--gold);font-weight:bold;margin-bottom:4px">👔 EMPLOYEE BOARD — 6 พนักงาน (1 คอมโบ/คน · แข่งกันออกซิก)</div>
+      <div style="font-size:10px;color:var(--gold);font-weight:bold;margin-bottom:4px">👔 EMPLOYEE BOARD — ${this.EMPLOYEES.length} พนักงาน (1 คอมโบ/คน · แข่งกันออกซิก)
+        <button onclick="Company.addCombo()" class="btn btn-secondary" style="font-size:7px;padding:2px 8px;margin-left:8px">+ จ้างพนักงาน/คอมโบใหม่</button>
+      </div>
       <div style="font-size:7px;padding:4px 6px;background:rgba(0,255,200,0.05);border:1px solid var(--teal);border-radius:5px;margin-bottom:6px">🎯 รอบนี้ใครได้คุม: ${wBanner}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${cards}</div>
       <div style="font-size:6px;color:#778;margin-top:4px">⭐ = เรตติ้งจากผลจริง (ต้อง ≥3 ไม้ถึงให้ดาว) · ออกซิก = จำนวนครั้งที่ยิง · W/L/R = ผลที่จับคู่กับไม้จริงได้</div>
