@@ -2656,8 +2656,10 @@ const Company = {
       `<button onclick="Company.applyPreset('${k}')" class="btn btn-secondary" style="font-size:7px;padding:3px 7px">${this.PRESETS[k].label}</button>`
     ).join('');
     return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:5px 7px;background:rgba(255,215,0,0.05);border:1px dashed var(--gold);border-radius:5px">
-      <span style="font-size:7px;color:var(--gold);font-weight:bold">⚡ PRESET เทคนิค:</span>${btns}
-      <span style="font-size:6px;color:#778;margin-left:auto">กดเพื่อให้ทั้งทีมใช้สไตล์เทรดเดอร์คนนั้น</span>
+      <button onclick="Company.applyBestSpecialists()" class="btn btn-primary" style="font-size:8px;padding:4px 10px;font-weight:bold">🏆 ใช้ทีมหัวกระทิ (Best จาก KB)</button>
+      <span style="font-size:7px;color:#778">|</span>
+      <span style="font-size:7px;color:var(--gold)">หรือบังคับสไตล์:</span>${btns}
+      <span style="font-size:6px;color:#778;margin-left:auto">🏆 = เลือกเทคนิคดีสุด/คู่ อัตโนมัติ (ผสมหลายตัว · ปรับเองเมื่อ KB โต)</span>
     </div>`;
   },
 
@@ -2673,15 +2675,74 @@ const Company = {
     return best;
   },
 
+  // PHASE 21.5: pick the best technique-combo for a pair straight from KB
+  // (ranked by avgR = R / trades). Adapts automatically as KB grows.
+  bestKitFor(sym) {
+    const fb = sym === 'XAUUSD' ? ['bollinger','utbot','fib','rsi']
+             : sym === 'AUDUSD' ? ['fib','elliott','utbot','rsi']
+             :                    ['bollinger','utbot','fib','elliott'];
+    if (typeof AgentScores === 'undefined') return { kit: fb, skills: [] };
+    const kb = AgentScores.load();
+    const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
+    const short2key = {};
+    Object.entries(this._KEYMAP).forEach(([k, s]) => short2key[s.toLowerCase()] = k);
+    const cand = [];
+    Object.entries(kb.agents).forEach(([name, a]) => {
+      if (!name.startsWith(prefix + '-')) return;
+      const short = name.split('-').slice(1).join('-');
+      const key = short2key[short.toLowerCase()];
+      if (!key || key === 'mtf' || key === 'news') return;
+      const b = a['sym_' + sym] || a.all;
+      if (!b || b.t < 20 || b.R <= 0) return;
+      cand.push({ key, short, R: b.R, t: b.t, avgR: b.R / b.t, acc: Math.round(b.w / b.t * 100) });
+    });
+    cand.sort((x, y) => y.avgR - x.avgR);
+    const top = cand.slice(0, 4);
+    return { kit: top.length >= 2 ? top.map(c => c.key) : fb, skills: top };
+  },
+
+  // 3 head traders — 1 per pair, kit auto-selected from KB
+  _buildRoster() {
+    const defs = [
+      { sym:'XAUUSD', name:'Aurum',   speed:'Scalp', face:{ skin:'#e9b48c',hair:'#101015',style:'bun',  acc:'headband',accColor:'#ffd700' } },
+      { sym:'AUDUSD', name:'Matilda', speed:'Swing', face:{ skin:'#e9b48c',hair:'#6b4a2a',style:'long', acc:'visor',   accColor:'#00ccff' } },
+      { sym:'EURUSD', name:'Pierre',  speed:'Swing', face:{ skin:'#e3c9a0',hair:'#2a2a3a',style:'short',acc:'glasses', accColor:'#4169e1' } },
+    ];
+    return defs.map(d => {
+      const best = this.bestKitFor(d.sym);
+      const kitNames = best.kit.map(k => this._KEYMAP[k] || k).join(' + ');
+      return { ...d, id:'best_'+d.sym, kit: best.kit, desc:'หัวหน้าโต๊ะ · ' + kitNames };
+    });
+  },
+
+  // Apply the best multi-technique combo across all 3 pairs (does NOT trade
+  // single technique — uses a curated KB-proven blend per pair)
+  applyBestSpecialists() {
+    const roster = this._buildRoster();
+    const lines = roster.map(t => `${t.name} (${t.sym.replace('USD','')}): ${t.kit.map(k=>this._KEYMAP[k]).join('+')}`).join('\n');
+    if (!confirm('🏆 ใช้ "ทีมหัวกระทิ" (Best Specialists)?\n\nเปิดเฉพาะเทคนิคที่ KB พิสูจน์แล้วว่าดีที่สุดของแต่ละคู่ (ผสมหลายตัว) + ปิดตัวที่ขาดทุนชัด:\n\n'+lines)) return;
+    const union = new Set();
+    roster.forEach(t => t.kit.forEach(k => union.add(this._SETKEY[k] || k)));
+    const ALL = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','OrderBlock','Sweep','Breakout','FVG','News'];
+    ALL.forEach(name => Settings.set('enable' + name, union.has(name) || name === 'MTF'));
+    Settings.set('enableXAU', true); Settings.set('enableAUD', true); Settings.set('enableEUR', true);
+    Settings.set('minGrade', 'A');
+    Settings.set('riskPerTrade', Math.min(2, Settings.get('riskPerTrade', 2)));
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD','Strategy','🏆 Best Specialists applied');
+    alert('✅ ทีมหัวกระทิพร้อมเทรด!\n\n'+lines+'\n\n(เทคนิคพวกนี้ KB บอกว่ากำไรดีสุดต่อคู่ · จะปรับเองเมื่อ KB โตขึ้น)');
+    if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
+    if (typeof Company !== 'undefined') Company.refresh();
+  },
+
   renderTraders() {
     const gold = TradingWarRoom?.lastGold;
     const fx   = TradingWarRoom?.lastFX;
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bal = BotBridge?.lastStatus?.balance || Settings.get('accountSize', 30);
 
-    // group roster by symbol
+    // group roster by symbol — now 3 head traders (1 per pair, KB-best combo)
     const groups = {};
-    this.roster.forEach(t => {
+    this._buildRoster().forEach(t => {
       const team = teamFor(t.sym);
       const entry = { ...t, rec: this._traderRecord(t), live: this._traderSignal(team, t.kit) };
       (groups[t.sym] = groups[t.sym] || []).push(entry);
