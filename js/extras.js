@@ -2123,6 +2123,39 @@ const Office = {
       </div>`;
   },
 
+  // PHASE 25.2: AURA-style trading floor — 6 employees at pixel desks
+  _deskScene() {
+    if (typeof Company === 'undefined') return '';
+    Company._initCustom(); Company._injectFX();
+    const gold = TradingWarRoom?.lastGold, fx = TradingWarRoom?.lastFX;
+    const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
+    const bot = BotBridge?.lastStatus;
+    const winners = Company._pairWinners(teamFor, bot);
+    const winnerOf = (id) => Object.keys(winners).find(s => winners[s] && winners[s].emp.id === id);
+    const desks = Company.EMPLOYEES.map(e => {
+      const combo = Company.COMBOS[e.combo] || { icon:'', name:'' };
+      let best = null;
+      ['XAUUSD','AUDUSD','EURUSD'].forEach(s => { const d = Company._empDecision(e, s, teamFor(s), bot); if (!best || d.score > best.score) best = d; });
+      const active = winnerOf(e.id);
+      const sig = best ? best.signal : 'wait';
+      const sigCol = sig === 'buy' ? '#00ff66' : sig === 'sell' ? '#ff4040' : '#5a6a82';
+      const head = (typeof UI !== 'undefined' && UI.pixelFace) ? UI.pixelFace(e.face, 30)
+        : `<div style="width:30px;height:30px;background:${e.face.accColor}33"></div>`;
+      const bubble = active ? `<div class="twr-bubble" style="background:${sigCol};left:50%;transform:translateX(-50%);top:-12px">${sig==='buy'?'▲ BUY':'▼ SELL'} ${active.replace('USD','')}!</div>` : '';
+      const monTxt = sig === 'buy' ? '▲' : sig === 'sell' ? '▼' : '··';
+      return `<div class="twr-emp${active?' active':''}" style="position:relative;text-align:center;${active?`color:${sigCol};`:''}">
+        ${bubble}
+        <div class="twr-head" style="display:inline-block;background:#0b0f1a;border:1px solid ${e.face.accColor}66;border-radius:4px;padding:1px">${head}</div>
+        <div style="margin:2px auto 0;width:34px;height:20px;background:#05080f;border:2px solid ${active?sigCol:'#2a3550'};border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:${sigCol};${active?`box-shadow:0 0 9px ${sigCol}`:''}">${monTxt}</div>
+        <div style="height:5px;background:linear-gradient(90deg,#3a2a1a,#5a4326,#3a2a1a);border-radius:1px;margin-top:1px"></div>
+        <div style="font-size:8px;color:#fff;font-weight:bold;margin-top:3px">${e.name}</div>
+        <div style="font-size:5.5px;color:${e.face.accColor}">${combo.icon} ${combo.name}</div>
+      </div>`;
+    }).join('');
+    return `<div style="font-size:8px;color:var(--gold);text-align:center;margin-bottom:8px">💼 TRADING FLOOR — พนักงาน ${Company.EMPLOYEES.length} คน <span style="font-size:6px;color:#9aa">(คนเรืองแสง = กำลังออกไม้)</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px 8px;padding:12px 8px;background:repeating-linear-gradient(0deg,#0f1626 0 24px,#0c1220 24px 26px);border-radius:6px;margin-bottom:14px">${desks}</div>`;
+  },
+
   render() {
     const bot  = BotBridge?.lastStatus;
     const gold = TradingWarRoom?.lastGold;
@@ -2166,13 +2199,8 @@ const Office = {
           ${this._char('sec','Janie','เลขา · คุยได้','online',"Modal.open('company')",true)}
         </div>
 
-        <!-- Trade desk row -->
-        <div style="font-size:8px;color:var(--gold);text-align:center;margin-bottom:6px">📈 TRADE DESK</div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-          ${this._char('xau','XAU Trader','ทอง',sig(gold),"Modal.open('company')",sig(gold)==='buy'||sig(gold)==='sell')}
-          ${this._char('aud','AUD Trader','ออส',sig(fx?.aud),"Modal.open('company')",sig(fx?.aud)==='buy'||sig(fx?.aud)==='sell')}
-          ${this._char('eur','EUR Trader','ยูโร',sig(fx?.eur),"Modal.open('company')",sig(fx?.eur)==='buy'||sig(fx?.eur)==='sell')}
-        </div>
+        <!-- AURA trading floor: 6 employees at pixel desks -->
+        ${this._deskScene()}
 
         <!-- Support staff row -->
         <div style="font-size:8px;color:var(--purple);text-align:center;margin-bottom:6px">🏛 SUPPORT</div>
@@ -2854,6 +2882,22 @@ const Company = {
     { id:'emp_wv', combo:'wave',        name:'Willa',  face:{skin:'#e3c9a0',hair:'#bfe0ff',style:'long', acc:'none',    accColor:'#00e5ff'} },
   ],
 
+  // PHASE 25.1: beep when an employee fires (buy = rising, sell = falling)
+  _beep(dir) {
+    if (typeof Settings !== 'undefined' && !Settings.get('sound', true)) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+      const ctx = new Ctx(); const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination); o.type = 'square';
+      const f = dir === 'buy' ? [660, 990] : [494, 330];
+      o.frequency.setValueAtTime(f[0], ctx.currentTime);
+      o.frequency.setValueAtTime(f[1], ctx.currentTime + 0.09);
+      g.gain.setValueAtTime(0.07, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.28);
+      o.start(); o.stop(ctx.currentTime + 0.28);
+    } catch (e) {}
+  },
+
   // ── PHASE 24.4: AURA-style "alive" office animations (inject CSS once) ──
   _injectFX() {
     if (this._fxInjected || typeof document === 'undefined') return; this._fxInjected = true;
@@ -3140,6 +3184,7 @@ const Company = {
       if (last && last.sig === d.signal && (now - last.ts) < COOLDOWN) return;
       this._lastTraderFire[sym] = { sig: d.signal, ts: now };
       this._logSignal(d.emp.id, sym, d.signal, d.grade, d.conf);   // AUDIT
+      this._beep(d.signal);                                        // SOUND
       if (typeof BotBridge !== 'undefined' && BotBridge.sendAISignal) {
         BotBridge.sendAISignal(sym, d.signal);
         if (typeof UI !== 'undefined' && UI.addLog)
