@@ -58,6 +58,7 @@ const UI = {
       'ICHIMOKU':   { face: '🥷', title: 'Cloud Samurai',    bg: '#dc143c', short: 'ICH' },
       'DXY':        { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
       'DXY (USD)':  { face: '🤵', title: 'USD Banker',       bg: '#228b22', short: 'DXY' },
+      'UT-BOT':     { face: '🎯', title: 'Trend Sniper',     bg: '#00ced1', short: 'UT' },
       'NEWS':       { face: '📺', title: 'News Anchor',      bg: '#ff1493', short: 'NWS' },
     };
     return profiles[t] || { face: '👤', title: 'Analyst', bg: '#888', short: t.slice(0,3) };
@@ -288,6 +289,15 @@ const UI = {
         { l:'Source',  v: agents.dxy.report.source ?? '--' },
       ]);
     }
+    // Phase 15.3: UT-Bot panel
+    if (agents.utbot) {
+      extraCards += this.analystCard('🎯', 'UT-Bot', agents.utbot.signal, [
+        { l:'Position', v: agents.utbot.report.position ?? '--', c: agents.utbot.report.position?.includes('Above')?'up':'down' },
+        { l:'Trigger',  v: agents.utbot.report.trigger ?? '--', c: agents.utbot.report.trigger?.includes('BUY')?'up':agents.utbot.report.trigger?.includes('SELL')?'down':'' },
+        { l:'Trail SL', v: agents.utbot.report.trailStop ?? '--', c: 'warn' },
+        { l:'ATR',      v: agents.utbot.report.atr ?? '--' },
+      ]);
+    }
 
     el.innerHTML = `
       ${this.headAgentBar('Maj.Gold — XAUUSD', head.signal, head.conf, `Price: ${price.toFixed(d)}`)}
@@ -370,6 +380,12 @@ const UI = {
         { l:'Bias',    v: agents.dxy.report?.pairBias ?? '--', c: 'info' },
         { l:'Source',  v: agents.dxy.report?.source ?? '--' },
       ] : null;
+      const utM = agents.utbot ? [
+        { l:'Position', v: agents.utbot.report?.position ?? '--', c: agents.utbot.report?.position?.includes('Above')?'up':'dn' },
+        { l:'Trigger',  v: agents.utbot.report?.trigger ?? '--', c: agents.utbot.report?.trigger?.includes('BUY')?'up':agents.utbot.report?.trigger?.includes('SELL')?'dn':'' },
+        { l:'Trail SL', v: agents.utbot.report?.trailStop ?? '--', c: 'warn' },
+        { l:'ATR',      v: agents.utbot.report?.atr ?? '--' },
+      ] : null;
 
       return `<div style="border-top:1px solid var(--border);padding:4px 0 0">
         <div style="font-size:7px;padding:4px 10px;color:var(--teal);border-bottom:1px solid var(--border)">
@@ -387,6 +403,7 @@ const UI = {
           ${agents.pattern   ? this.analystCard('🕯', 'Pattern',   agents.pattern.signal,   ptnM) : ''}
           ${agents.ichimoku  ? this.analystCard('🌥', 'Ichimoku',  agents.ichimoku.signal,  ichM) : ''}
           ${agents.dxy       ? this.analystCard('💵', 'DXY',       agents.dxy.signal,       dxyM) : ''}
+          ${agents.utbot     ? this.analystCard('🎯', 'UT-Bot',    agents.utbot.signal,     utM) : ''}
         </div>
       </div>`;
     };

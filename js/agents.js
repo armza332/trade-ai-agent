@@ -726,6 +726,75 @@ class MTFAgent extends BaseAgent {
    NEWS ANALYST — Economic Calendar Simulation
    ═══════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════
+   UT BOT — ATR Trailing-Stop trend follower (Phase 15.3)
+   Inspired by popular "UT Bot Alerts" — flips long/short when
+   price crosses an ATR-based trailing stop line.
+   ═══════════════════════════════════════════════════════ */
+class UTBotAgent extends BaseAgent {
+  constructor(team) {
+    super('UT-Bot', 'ATR Trailing-Stop trend signal', '🎯', team);
+  }
+  analyze(data) {
+    const { candles, cfg } = data;
+    if (!candles || candles.length < 30) {
+      return { signal:'wait', conf:30, report:{}, log:'Insufficient data' };
+    }
+    const keyValue = 2.0;      // sensitivity (1=tight, 3=loose)
+    const atrPeriod = 10;
+    const closes = candles.map(c => c.close);
+
+    // ATR (simple)
+    let trs = [];
+    for (let i = 1; i < candles.length; i++) {
+      const h = candles[i].high, l = candles[i].low, pc = candles[i-1].close;
+      trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
+    }
+    const atrSlice = trs.slice(-atrPeriod);
+    const atr = atrSlice.reduce((a,b)=>a+b,0) / atrSlice.length;
+    const nLoss = keyValue * atr;
+
+    // Walk the trailing stop forward across recent bars
+    let stop = closes[closes.length - 30];
+    let pos = 0; // 1 long, -1 short
+    for (let i = closes.length - 29; i < closes.length; i++) {
+      const c = closes[i], pc = closes[i-1];
+      if (c > stop && pc > stop)      stop = Math.max(stop, c - nLoss);
+      else if (c < stop && pc < stop) stop = Math.min(stop, c + nLoss);
+      else if (c > stop)              stop = c - nLoss;
+      else                            stop = c + nLoss;
+    }
+    const last = closes.at(-1);
+    const prev = closes.at(-2);
+
+    // Cross detection
+    const crossUp   = prev <= stop && last > stop;
+    const crossDown = prev >= stop && last < stop;
+    const above = last > stop;
+
+    let score = 0;
+    if (crossUp)        score = 30;       // fresh long trigger
+    else if (crossDown) score = -30;      // fresh short trigger
+    else if (above)     score = 12;       // holding long trend
+    else                score = -12;      // holding short trend
+
+    this.signal = score >= 20 ? 'buy' : score <= -20 ? 'sell' :
+                  score > 0 ? 'watch' : score < 0 ? 'watch' : 'wait';
+    this.conf = this._conf(50 + Math.abs(score) * 1.3);
+
+    const d = cfg.digits - 1;
+    this.report = {
+      trailStop: stop.toFixed(d),
+      price:     last.toFixed(d),
+      position:  above ? '🟢 Above (long bias)' : '🔴 Below (short bias)',
+      trigger:   crossUp ? '▲ Fresh BUY cross' : crossDown ? '▼ Fresh SELL cross' : '— holding —',
+      atr:       atr.toFixed(d),
+    };
+    this.lastLog = `UT-Bot ${this.signal.toUpperCase()} | ${this.report.trigger} | stop ${stop.toFixed(d)}`;
+    return { signal: this.signal, conf: this.conf, report: this.report, log: this.lastLog };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    ICHIMOKU KINKO HYO — All-in-one trend system (Phase 14)
    Note: skips Scalp/M1 mode — designed for H1+
    ═══════════════════════════════════════════════════════ */
@@ -1086,6 +1155,7 @@ class GoldTeam {
     this.mtf        = new MTFAgent('GOLD', 'XAUUSD');
     this.ichimoku   = new IchimokuAgent('GOLD');   // Phase 14
     this.dxy        = new DXYAgent('GOLD');         // Phase 14
+    this.utbot      = new UTBotAgent('GOLD');       // Phase 15.3
     this.news       = new NewsAgent('GOLD', ['XAU', 'USD']);
   }
 
@@ -1122,6 +1192,7 @@ class GoldTeam {
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(this.mtf.analyze(data, market), 'Gold-MTF'); reports.push(agents.mtf); }
     if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(this.ichimoku.analyze(data),  'Gold-Ichimoku');  reports.push(agents.ichimoku); }
     if (this._on('enableDXY',       true)) { agents.dxy       = wt(this.dxy.analyze(data),       'Gold-DXY');       reports.push(agents.dxy); }
+    if (this._on('enableUTBot',     true)) { agents.utbot     = wt(this.utbot.analyze(data),     'Gold-UT-Bot');    reports.push(agents.utbot); }
     if (this._on('enableNews',      true)) { agents.news      = wt(this.news.analyze(),          'Gold-News');      reports.push(agents.news); }
 
     const agg = this.head.aggregate(reports);
@@ -1161,6 +1232,7 @@ class CurrencyTeam {
       mtf:        new MTFAgent('AUDUSD', 'AUDUSD'),
       ichimoku:   new IchimokuAgent('AUDUSD'),   // Phase 14
       dxy:        new DXYAgent('AUDUSD'),         // Phase 14
+      utbot:      new UTBotAgent('AUDUSD'),       // Phase 15.3
     };
 
     // EURUSD sub-analysts
@@ -1178,6 +1250,7 @@ class CurrencyTeam {
       mtf:        new MTFAgent('EURUSD', 'EURUSD'),
       ichimoku:   new IchimokuAgent('EURUSD'),   // Phase 14
       dxy:        new DXYAgent('EURUSD'),         // Phase 14
+      utbot:      new UTBotAgent('EURUSD'),       // Phase 15.3
     };
 
     this.news    = new NewsAgent('CURRENCY', ['AUD', 'EUR', 'USD']);
@@ -1224,6 +1297,7 @@ class CurrencyTeam {
     if (this._on('enableMTF',       true) && market) { agents.mtf = wt(pair.mtf.analyze(data, market), 'MTF'); reports.push(agents.mtf); }
     if (this._on('enableIchimoku',  true)) { agents.ichimoku  = wt(pair.ichimoku.analyze(data),  'Ichimoku');  reports.push(agents.ichimoku); }
     if (this._on('enableDXY',       true)) { agents.dxy       = wt(pair.dxy.analyze(data),       'DXY');       reports.push(agents.dxy); }
+    if (this._on('enableUTBot',     true)) { agents.utbot     = wt(pair.utbot.analyze(data),     'UT-Bot');    reports.push(agents.utbot); }
     return { agents, agg: pair.head.aggregate(reports) };
   }
 

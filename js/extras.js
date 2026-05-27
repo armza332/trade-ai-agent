@@ -538,7 +538,7 @@ const Modal = {
     const ag = document.getElementById('s-adxgate');   if (ag) ag.value   = Settings.get('adxGate', 20);
     const ka = document.getElementById('s-keepalive'); if (ka) ka.checked = Settings.get('keepAlive', true);
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) el.checked = Settings.get('enable' + name, name !== 'Pivot');
     });
@@ -578,7 +578,7 @@ const Modal = {
       }
     }
     // Analyst toggles
-    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'].forEach(name => {
+    ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'].forEach(name => {
       const el = document.getElementById('s-en-' + name);
       if (el) Settings.set('enable' + name, el.checked);
     });
@@ -1042,7 +1042,7 @@ const AgentScores = {
       return;
     }
 
-    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','News'];
+    const ALL_AGENTS = ['SMC','Elliott','Fib','RSI','MACD','Bollinger','Pivot','Pattern','Divergence','MTF','Ichimoku','DXY','UTBot','News'];
 
     // 1. Profitable symbols = enable all with totalR > 0 AND winnerCount >= 2
     const profitableSyms = rec.filter(s => s.totalR > 30 && s.winnerCount >= 2);
@@ -1978,10 +1978,31 @@ window.BotBridge = BotBridge;
 const Company = {
   chatLog: [],   // {role:'user'|'sec', text}
 
+  // Full build (called once when modal opens)
   refresh() {
     const el = document.getElementById('company-body');
-    if (el) el.innerHTML = this.render();
+    if (!el) return;
+    // If shell not built yet, build it; otherwise only update office (preserve chat input)
+    if (!document.getElementById('company-office')) {
+      el.innerHTML = this.render();
+    } else {
+      this.refreshData();
+    }
     this._renderChat();
+  },
+
+  // Lightweight update — only re-renders data panels, NEVER touches chat input
+  refreshData() {
+    const office = document.getElementById('company-office');
+    if (office) office.innerHTML = this.renderOffice();
+    // update autopilot banner + button state
+    const ap = Settings.get('autoPilot', false);
+    const apBtn = document.getElementById('company-ap-btn');
+    if (apBtn) {
+      apBtn.textContent = `🤖 AUTO PILOT: ${ap ? 'ON' : 'OFF'}`;
+      apBtn.style.background = ap ? 'var(--green)' : '#333';
+      apBtn.style.color = ap ? '#000' : '#aaa';
+    }
   },
 
   // ═══ SECRETARY CHAT BRAIN (rule-based Thai/EN Q&A + command exec) ═══
@@ -2053,15 +2074,50 @@ const Company = {
     if (has('กลยุทธ์','strategy','agent ไหนดี','เทคนิคไหน','ปรับ')) {
       return 'เรื่องกลยุทธ์ ขอประสานกับ 🧠 Strategy Officer นะคะ —\nดูได้ที่ panel Strategy Officer ด้านล่าง หรือกด 📓 JOURNAL เพื่อดู KB stats เต็ม ๆ\nถ้าอยากปรับอัตโนมัติ กดปุ่ม "ปรับกลยุทธ์" ได้เลยค่ะ';
     }
-    if (has('สวัสดี','hello','hi','หวัดดี','ดีค่ะ','ดีครับ')) {
-      return 'สวัสดีค่ะ CEO 👋 ดิฉันเป็นเลขาประจำบริษัทค่ะ\nถามได้เลยนะคะ เช่น "สถานะตอนนี้", "กำไรเท่าไหร่", "ทำไมไม่เทรด", "ปิดทุกไม้", "เปิด autopilot"';
+    // ─── Per-symbol trader questions ───
+    if (has('ทอง','gold','xau')) {
+      const t = TradingWarRoom?.lastGold;
+      if (t) return `🥷 XAU Trader รายงานค่ะ:\nสัญญาณ ${(t.head?.signal||'wait').toUpperCase()} · Confidence ${t.head?.conf||0}%\nConsensus ${t.head?.consensusPct||0}% · ราคา ${(t.price||0).toFixed(2)}\n${t.head?.signal==='buy'||t.head?.signal==='sell'?'มี setup น่าสนใจค่ะ':'ยังเฝ้าดูอยู่ค่ะ'}`;
+      return '🥷 XAU Trader ยังไม่มีข้อมูลค่ะ — รอ market วิเคราะห์';
     }
-    if (has('ช่วย','help','ทำอะไรได้','คำสั่ง')) {
-      return 'ดิฉันช่วยได้หลายอย่างค่ะ:\n📊 "สถานะ" / "กำไร" — รายงานบัญชี\n🔍 "ทำไมไม่เทรด" — อธิบายสถานการณ์\n🔴 "ปิดทุกไม้" / "หยุดบอท" / "เริ่มเทรด" — สั่งงานทีม\n🤖 "เปิด autopilot" — ให้ทีมตัดสินใจเอง\n🧠 "กลยุทธ์" — ประสานทีมกลยุทธ์';
+    if (has('ยูโร','eur','euro')) {
+      const t = TradingWarRoom?.lastFX?.eur;
+      if (t) return `⚔️ EUR Trader: ${(t.signal||'wait').toUpperCase()} · Conf ${t.conf||0}% · ราคา ${(t.price||0).toFixed(4)}`;
+      return '⚔️ EUR Trader ยังไม่มีข้อมูลค่ะ';
+    }
+    if (has('ออส','aud','aussie')) {
+      const t = TradingWarRoom?.lastFX?.aud;
+      if (t) return `🏹 AUD Trader: ${(t.signal||'wait').toUpperCase()} · Conf ${t.conf||0}% · ราคา ${(t.price||0).toFixed(4)}`;
+      return '🏹 AUD Trader ยังไม่มีข้อมูลค่ะ';
     }
 
-    // ─── Fallback ───
-    return 'ขอโทษค่ะ ดิฉันยังไม่เข้าใจคำถามนี้ 🙏\nลองถามแบบนี้นะคะ: "สถานะตอนนี้", "กำไรเท่าไหร่", "ทำไมไม่เทรด", "ปิดทุกไม้", "เปิด autopilot", หรือพิมพ์ "ช่วย"';
+    // ─── Coaching / how-to ───
+    if (has('สอน','วิธี','ยังไง','how','ทำไง','เริ่มยังไง')) {
+      return 'ได้ค่ะ ดิฉันแนะนำได้:\n• อยากให้บอทเทรดเอง → พิมพ์ "เปิด autopilot"\n• อยากดูผลงาน → ถาม "กำไร" หรือกด 📊 JOURNAL\n• อยากปรับกลยุทธ์ → คุยกับ 🧠 Strategy Officer\n• กังวลเรื่องเสี่ยง → ถาม "risk"\nมีอะไรให้ช่วยอีกไหมคะ?';
+    }
+    // ─── Thanks / encouragement ───
+    if (has('ขอบคุณ','thank','เก่ง','ดีมาก','สุดยอด')) {
+      return 'ยินดีค่ะ CEO 🙏 ดิฉันกับทีมพร้อมทำงานให้เต็มที่ค่ะ ถ้ามีอะไรเรียกได้ตลอดนะคะ 💪';
+    }
+    if (has('เป็นห่วง','กังวล','กลัว','เครียด','worry')) {
+      const bot = BotBridge?.lastStatus;
+      const dd = bot ? (bot.equity - bot.balance) : 0;
+      return `เข้าใจค่ะ 🤗 ตอนนี้มี Risk Officer คุม portfolio ≤ ${bot?(parseFloat(bot.maxPortfolioRisk)||6):6}% + Breakeven/Trailing SL กันทุนให้\n${dd<-2?'⚠️ ตอนนี้ equity ติดลบนิดหน่อย ถ้าไม่สบายใจ บอก "ปิดทุกไม้" ได้เลยค่ะ':'ระบบมีกันชนหลายชั้น ไม่ต้องกังวลมากค่ะ'}`;
+    }
+    if (has('สวัสดี','hello','hi','หวัดดี','ดีค่ะ','ดีครับ','เลขา')) {
+      const greet = ['สวัสดีค่ะ CEO 👋','สวัสดีค่ะนาย 😊','ดีค่ะ CEO ✨'][Math.floor(Math.random()*3)];
+      return `${greet} ดิฉัน Janie เลขาประจำบริษัทค่ะ\nถามได้เลยนะคะ: "สถานะ", "กำไร", "ทำไมไม่เทรด", "ทอง/EUR/AUD เป็นไง", "เปิด autopilot" หรือพิมพ์ "ช่วย"`;
+    }
+    if (has('ช่วย','help','ทำอะไรได้','คำสั่ง','เมนู')) {
+      return 'ดิฉันช่วยได้หลายอย่างค่ะ:\n📊 "สถานะ" / "กำไร" — รายงานบัญชี\n🔍 "ทำไมไม่เทรด" — อธิบายสถานการณ์\n💎 "ทอง/EUR/AUD เป็นไง" — ถามแต่ละ trader\n🛡 "risk" — ความเสี่ยงพอร์ต\n🔴 "ปิดทุกไม้" / "หยุดบอท" / "เริ่มเทรด" — สั่งงานทีม\n🤖 "เปิด autopilot" — ให้ทีมตัดสินใจเอง\n🧠 "กลยุทธ์" — ประสานทีมกลยุทธ์';
+    }
+
+    // ─── Fallback (smarter — guess intent) ───
+    if (has('?','ไหม','อะไร','เท่าไหร่','เมื่อไหร่')) {
+      const bot = BotBridge?.lastStatus;
+      return `ขอโทษค่ะ ดิฉันไม่แน่ใจว่าหมายถึงอะไร 🤔\nแต่ตอนนี้: ${bot?`EA ${bot.online?'🟢 online':'🔴 offline'} · P/L วันนี้ $${(bot.todayPnL||0).toFixed(2)}`:'ยังไม่เชื่อม EA'}\nลองถามชัด ๆ เช่น "กำไรเท่าไหร่", "ทองเป็นไง", "risk เท่าไหร่" นะคะ`;
+    }
+    return 'ขอโทษค่ะ ดิฉันยังไม่เข้าใจ 🙏 ลองพิมพ์ "ช่วย" เพื่อดูสิ่งที่ดิฉันทำได้ หรือถามแบบ: "สถานะ", "กำไร", "ทองเป็นไง", "เปิด autopilot" ค่ะ';
   },
 
   _renderChat() {
@@ -2278,9 +2334,8 @@ const Company = {
     return notes.map(n => `<div style="font-size:9px;color:var(--white);padding:3px 0;border-left:2px solid var(--purple);padding-left:8px;margin:3px 0">${n}</div>`).join('');
   },
 
+  // SHELL — built once; contains persistent chat + #company-office (refreshable)
   render() {
-    const gold = TradingWarRoom?.lastGold;
-    const fx   = TradingWarRoom?.lastFX;
     const autoPilot = Settings.get('autoPilot', false);
     const apCol = autoPilot ? 'var(--green)' : 'var(--gray)';
     return `
@@ -2292,7 +2347,7 @@ const Company = {
           <div style="font-size:9px;color:var(--gray);margin-top:2px">Human-in-the-loop · ตั้ง risk limits</div>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-          <button class="btn" style="font-size:10px;padding:8px 14px;background:${autoPilot?'var(--green)':'#333'};color:${autoPilot?'#000':'#aaa'};border:2px solid ${apCol};font-weight:bold" onclick="Company.setAutoPilot(${!autoPilot})">
+          <button id="company-ap-btn" class="btn" style="font-size:10px;padding:8px 14px;background:${autoPilot?'var(--green)':'#333'};color:${autoPilot?'#000':'#aaa'};border:2px solid ${apCol};font-weight:bold" onclick="Company.setAutoPilot(!Settings.get('autoPilot',false))">
             🤖 AUTO PILOT: ${autoPilot ? 'ON' : 'OFF'}
           </button>
           <button class="btn" style="font-size:10px;padding:8px 14px;background:var(--red);color:#fff;border:none" onclick="BotBridge.sendCommand('close_all')">🔴 Close All</button>
@@ -2300,46 +2355,12 @@ const Company = {
         </div>
       </div>
 
-      ${autoPilot ? `<div style="padding:8px 14px;background:rgba(0,255,65,0.1);border:1px solid var(--green);margin-bottom:12px;font-size:10px;color:var(--green)">
-        🤖 <b>AUTO PILOT ทำงานอยู่</b> — ทีมกลยุทธ์ + เทรดตัดสินใจเอง 100% เมื่อเจอ Grade A+ จะส่งเข้า EA ทันที (CEO ไม่ต้องกดอะไร)
-      </div>` : ''}
-
-      <!-- 2-column: left = office, right = secretary chat -->
+      <!-- 2-column: left = office (refreshable), right = secretary chat (persistent) -->
       <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+        <div id="company-office">${this.renderOffice()}</div>
 
-        <!-- LEFT: office floor -->
-        <div>
-          <!-- Trade Desk: 3 traders -->
-          <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 3 Traders</div>
-          <div style="display:flex;gap:8px;margin-bottom:12px">
-            ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
-            ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
-            ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
-          </div>
-
-          <!-- departments -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <div style="padding:10px;border:1px solid var(--purple);background:rgba(120,80,255,0.05);border-radius:4px">
-              <div style="font-size:10px;color:var(--purple);margin-bottom:6px;font-weight:bold">🧠 Strategy Officer</div>
-              ${this._strategyReport()}
-            </div>
-            <div style="padding:10px;border:1px solid var(--green);background:rgba(0,255,65,0.05);border-radius:4px">
-              <div style="font-size:10px;color:var(--green);margin-bottom:6px;font-weight:bold">📊 Accountant</div>
-              ${this._accountantReport()}
-            </div>
-            <div style="padding:10px;border:1px solid var(--orange);background:rgba(255,140,0,0.05);border-radius:4px">
-              <div style="font-size:10px;color:var(--orange);margin-bottom:6px;font-weight:bold">💻 Dev Monitor</div>
-              ${this._devMonitor()}
-            </div>
-            <div style="padding:10px;border:1px solid #a78bfa;background:rgba(167,139,250,0.08);border-radius:4px">
-              <div style="font-size:10px;color:#a78bfa;margin-bottom:6px;font-weight:bold">🤖 Claude — Board Advisor</div>
-              ${this._claudeAdvisory()}
-            </div>
-          </div>
-        </div>
-
-        <!-- RIGHT: Secretary chat -->
-        <div style="display:flex;flex-direction:column;border:2px solid var(--teal);border-radius:6px;background:rgba(0,255,255,0.03);height:520px">
+        <!-- RIGHT: Secretary chat — NEVER re-rendered (input stays) -->
+        <div style="display:flex;flex-direction:column;border:2px solid var(--teal);border-radius:6px;background:rgba(0,255,255,0.03);height:540px">
           <div style="padding:10px;border-bottom:1px solid var(--teal);display:flex;align-items:center;gap:8px">
             <span style="font-size:24px">📋</span>
             <div>
@@ -2349,20 +2370,56 @@ const Company = {
             <span style="margin-left:auto;font-size:8px;color:var(--green)">🟢 พร้อมคุย</span>
           </div>
           <div id="sec-chat-log" style="flex:1;overflow-y:auto;padding:10px"></div>
-          <div style="padding:8px;border-top:1px solid var(--teal);display:flex;gap:6px">
-            <input id="sec-chat-input" type="text" placeholder="ถามเลขา... เช่น สถานะตอนนี้, กำไรเท่าไหร่, เปิด autopilot"
-              style="flex:1;background:var(--bg-card);border:1px solid var(--border);color:var(--white);padding:8px;font-size:10px;font-family:inherit"
-              onkeydown="Company._onChatKey(event)">
-            <button class="btn btn-primary" style="font-size:10px;padding:8px 12px" onclick="Company.sendChat()">ส่ง</button>
+          <div style="padding:8px;border-top:1px solid var(--teal)">
+            <div style="display:flex;gap:6px">
+              <input id="sec-chat-input" type="text" placeholder="ถามเลขา / สั่งงาน..." autocomplete="off"
+                style="flex:1;background:var(--bg-card);border:1px solid var(--border);color:var(--white);padding:8px;font-size:11px;font-family:inherit"
+                onkeydown="Company._onChatKey(event)">
+              <button class="btn btn-primary" style="font-size:10px;padding:8px 14px" onclick="Company.sendChat()">ส่ง</button>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+              ${['สถานะ','กำไร','ทำไมไม่เทรด','สัญญาณ','risk','autopilot','ช่วย'].map(s =>
+                `<button class="btn btn-secondary" style="font-size:8px;padding:3px 6px" onclick="Company.askSecretary('${s}')">${s}</button>`
+              ).join('')}
+            </div>
           </div>
         </div>
       </div>
+    `;
+  },
 
-      <!-- quick chat suggestions -->
-      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-        ${['สถานะตอนนี้','กำไรเท่าไหร่','ทำไมไม่เทรด','สัญญาณล่าสุด','risk เท่าไหร่','เปิด autopilot','ปิดทุกไม้'].map(s =>
-          `<button class="btn btn-secondary" style="font-size:8px;padding:4px 8px" onclick="Company.askSecretary('${s}')">${s}</button>`
-        ).join('')}
+  // OFFICE — data panels, safe to re-render every tick (no chat input here)
+  renderOffice() {
+    const gold = TradingWarRoom?.lastGold;
+    const fx   = TradingWarRoom?.lastFX;
+    const autoPilot = Settings.get('autoPilot', false);
+    return `
+      ${autoPilot ? `<div style="padding:8px 12px;background:rgba(0,255,65,0.1);border:1px solid var(--green);margin-bottom:10px;font-size:9px;color:var(--green)">
+        🤖 <b>AUTO PILOT ON</b> — ทีมตัดสินใจเอง 100% · Grade A+ → EA ทันที
+      </div>` : ''}
+      <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 3 Traders</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
+        ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
+        ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="padding:10px;border:1px solid var(--purple);background:rgba(120,80,255,0.05);border-radius:4px">
+          <div style="font-size:10px;color:var(--purple);margin-bottom:6px;font-weight:bold">🧠 Strategy Officer</div>
+          ${this._strategyReport()}
+        </div>
+        <div style="padding:10px;border:1px solid var(--green);background:rgba(0,255,65,0.05);border-radius:4px">
+          <div style="font-size:10px;color:var(--green);margin-bottom:6px;font-weight:bold">📊 Accountant</div>
+          ${this._accountantReport()}
+        </div>
+        <div style="padding:10px;border:1px solid var(--orange);background:rgba(255,140,0,0.05);border-radius:4px">
+          <div style="font-size:10px;color:var(--orange);margin-bottom:6px;font-weight:bold">💻 Dev Monitor</div>
+          ${this._devMonitor()}
+        </div>
+        <div style="padding:10px;border:1px solid #a78bfa;background:rgba(167,139,250,0.08);border-radius:4px">
+          <div style="font-size:10px;color:#a78bfa;margin-bottom:6px;font-weight:bold">🤖 Claude — Board Advisor</div>
+          ${this._claudeAdvisory()}
+        </div>
       </div>
     `;
   },
