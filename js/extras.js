@@ -3140,6 +3140,19 @@ const Company = {
       const stCol = st.R > 0 ? 'var(--green)' : st.R < 0 ? 'var(--red)' : '#9aa';
       const ratingStars = st.matched >= 3 ? (st.wr >= 60 ? '⭐⭐⭐' : st.wr >= 45 ? '⭐⭐' : '⭐') : '—';
       const bubble = activePair ? `<div class="twr-bubble" style="background:${sigCol}">${sig==='buy'?'▲ BUY':'▼ SELL'} ${activePair.replace('USD','')}!</div>` : '';
+      // why is this employee (not) acting?
+      const tdOn = (typeof Settings !== 'undefined') && Settings.get('traderDrivenSignals', false);
+      let statusLine = '';
+      if (best && (sig === 'buy' || sig === 'sell')) {
+        const p = best.sym.replace('USD','');
+        if (best.approved) {
+          statusLine = activePair
+            ? `<div style="font-size:6px;color:var(--green);margin-top:3px">✅ ผ่านเกณฑ์ + ชนะคู่ ${p} → ${tdOn ? 'ยิงเลย' : '⚠️ เปิด 🎯 หัวหน้าโต๊ะยิงเอง ก่อนถึงจะยิงจริง'}</div>`
+            : `<div style="font-size:6px;color:var(--teal);margin-top:3px">✅ ${p} ผ่านเกณฑ์ แต่พนักงานอื่นชนะคู่นี้ (เลือกคนเดียว/คู่)</div>`;
+        } else {
+          statusLine = `<div style="font-size:6px;color:var(--orange);margin-top:3px">⛔ ${p}: ${best.blockedBy} — ยังไม่ออก</div>`;
+        }
+      }
       return `<div class="twr-emp${activePair?' active':''}" style="flex:1;min-width:200px;padding:8px;border:1px solid ${activePair?sigCol:'var(--border)'};border-radius:6px;background:${activePair?sigCol+'14':'rgba(255,255,255,0.02)'};position:relative;${activePair?`color:${sigCol};`:''}">
         ${bubble}
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
@@ -3149,7 +3162,7 @@ const Company = {
             <div style="font-size:6px;color:#9aa">${combo.icon} ${combo.name} · ${combo.agents.map(k=>this._KEYMAP[k]||k).join('+')}</div>
           </div>
           <div style="margin-left:auto;text-align:right;flex:none">
-            <div style="font-size:10px;color:${sigCol};font-weight:bold">${sigTxt}</div>
+            <div style="font-size:10px;color:${sigCol};font-weight:bold">${sigTxt}${best && sig!=='wait' ? ' ' + best.sym.replace('USD','') : ''}</div>
             <div style="font-size:6px;color:#9aa">${best?best.conf:0}% · G${best?best.grade:'-'}</div>
           </div>
         </div>
@@ -3160,6 +3173,7 @@ const Company = {
           <span style="color:${stCol}">${st.R>0?'+':''}${st.R.toFixed(1)}R</span>
           <span style="margin-left:auto">${ratingStars}</span>
         </div>
+        ${statusLine}
         <button onclick="Company.trainEmployee('${e.id}')" class="btn btn-secondary" style="font-size:7px;padding:2px 6px;margin-top:5px;width:100%">🎓 เทรน ${e.name}</button>
       </div>`;
     }).join('');
