@@ -788,5 +788,6 @@ const UI = {
     });
   },
 };
+if (typeof window !== 'undefined') window.UI = UI;
 
 if (typeof module !== 'undefined') module.exports = { UI };
