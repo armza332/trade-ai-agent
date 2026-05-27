@@ -1117,17 +1117,26 @@ void ExecuteCommand(string cmd) {
    }
 }
 
+// Phase 21.5: base-symbol match so web "XAUUSD" matches broker "XAUUSDm"/"XAUUSD.r" etc.
+// Compares the leading 6 chars (XAUUSD/AUDUSD/EURUSD) case-insensitively.
+bool SymBaseMatch(string a, string b) {
+   string aa = StringSubstr(a, 0, 6); StringToUpper(aa);
+   string bb = StringSubstr(b, 0, 6); StringToUpper(bb);
+   return (aa == bb);
+}
+
 // Phase 13: Execute trade requested by web AI (bypasses cooldown, uses current ATR for SL)
 void ExecuteAISignal(string sym, bool isBuy) {
-   // Find symbol index in active list
+   // Find symbol index in active list (Phase 21.5: tolerant base-symbol match)
    int idx = -1;
    for (int i = 0; i < nActiveSyms; i++) {
-      if (symbols[i] == sym) { idx = i; break; }
+      if (symbols[i] == sym || SymBaseMatch(symbols[i], sym)) { idx = i; break; }
    }
    if (idx < 0) {
       PrintFormat("🚫 AI signal for %s — not in EA active symbols, skipped", sym);
       return;
    }
+   sym = symbols[idx];   // use the broker's exact symbol name from here on
    if (!runEnabled[idx]) {
       PrintFormat("🚫 AI signal for %s — symbol disabled by user, skipped", sym);
       return;
