@@ -2655,12 +2655,22 @@ const Company = {
     const btns = Object.keys(this.PRESETS).map(k =>
       `<button onclick="Company.applyPreset('${k}')" class="btn btn-secondary" style="font-size:7px;padding:3px 7px">${this.PRESETS[k].label}</button>`
     ).join('');
+    const td = (typeof Settings !== 'undefined') && Settings.get('traderDrivenSignals', false);
     return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:5px 7px;background:rgba(255,215,0,0.05);border:1px dashed var(--gold);border-radius:5px">
       <button onclick="Company.applyBestSpecialists()" class="btn btn-primary" style="font-size:8px;padding:4px 10px;font-weight:bold">🏆 ใช้ทีมหัวกระทิ (Best จาก KB)</button>
+      <button onclick="Company.toggleTraderDriven()" class="btn ${td?'btn-primary':'btn-secondary'}" style="font-size:8px;padding:4px 10px">${td?'🎯 หัวหน้าโต๊ะยิงเอง: ON':'หัวหน้าโต๊ะยิงเอง: OFF'}</button>
       <span style="font-size:7px;color:#778">|</span>
-      <span style="font-size:7px;color:var(--gold)">หรือบังคับสไตล์:</span>${btns}
-      <span style="font-size:6px;color:#778;margin-left:auto">🏆 = เลือกเทคนิคดีสุด/คู่ อัตโนมัติ (ผสมหลายตัว · ปรับเองเมื่อ KB โต)</span>
+      <span style="font-size:7px;color:var(--gold)">บังคับสไตล์:</span>${btns}
+      <span style="font-size:6px;color:#778;margin-left:auto">🎯 ON = แต่ละหัวหน้าโต๊ะยิงคู่ตัวเองอิสระ (แทน Commander) เมื่อมั่นใจ+KB เป็นบวก</span>
     </div>`;
+  },
+  toggleTraderDriven() {
+    const on = !Settings.get('traderDrivenSignals', false);
+    Settings.set('traderDrivenSignals', on);
+    if (on) Settings.set('webAISignalsToEA', true);   // master switch must be on too
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD','Strategy', on?'🎯 Trader-Driven Signals: ON — หัวหน้าโต๊ะยิงคู่ตัวเอง':'Trader-Driven OFF — กลับไปใช้ Commander');
+    alert(on ? '🎯 เปิดโหมดหัวหน้าโต๊ะยิงเอง\n\nAurum/Matilda/Pierre จะส่งสัญญาณคู่ตัวเองอิสระ เมื่อ conf ≥60% และ KB เป็นบวก (cooldown 15 นาที/คู่)\n\n⚠️ ต้องเปิด "ส่งสัญญาณ AI ไป EA" ใน Settings ด้วย (เปิดให้แล้ว)' : 'ปิดโหมดหัวหน้าโต๊ะ — กลับไปใช้ Commander ส่งคู่เดียวที่ดีสุด');
+    if (typeof Company !== 'undefined') Company.refresh();
   },
 
   // Pick which trader presses the order for a pair
@@ -2732,6 +2742,34 @@ const Company = {
     alert('✅ ทีมหัวกระทิพร้อมเทรด!\n\n'+lines+'\n\n(เทคนิคพวกนี้ KB บอกว่ากำไรดีสุดต่อคู่ · จะปรับเองเมื่อ KB โตขึ้น)');
     if (typeof TradingWarRoom !== 'undefined' && TradingWarRoom.fullUpdate) TradingWarRoom.fullUpdate();
     if (typeof Company !== 'undefined') Company.refresh();
+  },
+
+  // PHASE 21.6: each head trader fires its OWN pair independently when confident
+  // (replaces the single Commander pick) — gated behind traderDrivenSignals.
+  _lastTraderFire: {},
+  traderSignalsTick(goldR, fxR) {
+    if (typeof Settings === 'undefined') return;
+    if (!Settings.get('traderDrivenSignals', false)) return;
+    if (!Settings.get('webAISignalsToEA', false)) return;   // respect master switch
+    const teamFor = (sym) => sym === 'XAUUSD' ? goldR : sym === 'AUDUSD' ? fxR?.aud : fxR?.eur;
+    const now = Date.now();
+    const COOLDOWN = 15 * 60 * 1000;   // 15-min per-pair cooldown
+    const minConf = Settings.get('traderMinConf', 60);
+    this._buildRoster().forEach(t => {
+      const live = this._traderSignal(teamFor(t.sym), t.kit);
+      if (live.signal !== 'buy' && live.signal !== 'sell') return;
+      if (live.conf < minConf) return;
+      const rec = this._traderRecord(t);
+      if (rec.R <= 0) return;   // only fire if this trader's KB edge is positive
+      const last = this._lastTraderFire[t.sym];
+      if (last && last.sig === live.signal && (now - last.ts) < COOLDOWN) return;
+      this._lastTraderFire[t.sym] = { sig: live.signal, ts: now };
+      if (typeof BotBridge !== 'undefined' && BotBridge.sendAISignal) {
+        BotBridge.sendAISignal(t.sym, live.signal);
+        if (typeof UI !== 'undefined' && UI.addLog)
+          UI.addLog('CMD', t.name, `🎯 ${t.name} ยิง ${live.signal.toUpperCase()} ${t.sym.replace('USD','')} (conf ${live.conf}% · KB ${rec.R>0?'+':''}${rec.R.toFixed(0)}R)`);
+      }
+    });
   },
 
   renderTraders() {

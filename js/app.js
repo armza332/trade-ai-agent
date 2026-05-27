@@ -204,10 +204,12 @@ const TradingWarRoom = {
     UI.renderCurrencyTeam(fxR);
     UI.renderCommander(cmdR);
 
-    // Phase 21: Trader roster on main dashboard (2 traders/pair w/ skills)
+    // Phase 21: Trader roster on main dashboard (3 head traders w/ skills)
     if (typeof Company !== 'undefined' && Company.renderTraders) {
       const rb = document.getElementById('trader-roster-body');
       if (rb) rb.innerHTML = Company.renderTraders();
+      // Phase 21.6: per-pair head-trader signals (opt-in)
+      if (Company.traderSignalsTick) Company.traderSignalsTick(goldR, fxR);
     }
 
     // Render big banner + grade badge
@@ -225,7 +227,10 @@ const TradingWarRoom = {
       UI.addLog('CMD', 'Commander', `📤 GRADE ${gradeInfo.grade} — ${cmdR.signal.toUpperCase()} ${cmdR.sym} @ ${cmdR.entry}`);
 
       // Phase 13: Send AI signal to EA when Grade ≥ A (user must opt-in via Settings)
-      if (gradeInfo.alert && typeof BotBridge !== 'undefined') {
+      // Phase 21.6: skip Commander single-send when trader-driven mode is on
+      //            (each head trader fires its own pair instead — see traderSignalsTick)
+      const traderDriven = (typeof Settings !== 'undefined') && Settings.get('traderDrivenSignals', false);
+      if (gradeInfo.alert && !traderDriven && typeof BotBridge !== 'undefined') {
         BotBridge.sendAISignal(cmdR.sym, cmdR.signal);
       }
     }
