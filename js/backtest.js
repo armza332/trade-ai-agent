@@ -485,6 +485,9 @@ const AutoOptimize = {
     const adxGates = opts.adxGates || [0, 20, 25];
     const maxCycles = opts.maxCycles || 200;
     const refetchEachCycle = opts.refetchEachCycle ?? true;
+    // Phase 22.1: by default DON'T auto-stop on convergence — keep training
+    // until the user presses STOP (or maxCycles / quota). Opt-in via opts.
+    const stopOnConverge = opts.stopOnConverge ?? false;
 
     this._addLog(`🤖 Auto-Optimize started — symbols: ${symbols.join(',')}, modes: ${modes.join(',')}, confs: ${confs.join(',')}, ADX: ${adxGates.join(',')}`);
 
@@ -571,7 +574,7 @@ const AutoOptimize = {
         }
 
         // If no improvement for 3 cycles, stop early
-        if (this.cycles >= 3 && this._noImprovement(3)) {
+        if (stopOnConverge && this.cycles >= 3 && this._noImprovement(3)) {
           this._addLog('🎯 No improvement for 3 cycles — stopping early (converged)');
           break;
         }
