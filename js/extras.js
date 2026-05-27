@@ -851,7 +851,14 @@ const AgentScores = {
   load() {
     try {
       const raw = localStorage.getItem(this.KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        // Phase 25.2: cache the parsed KB — the Employee Board calls load()
+        // dozens of times per render; re-parsing a big KB each time was slow.
+        if (this._cacheRaw === raw && this._cache) return this._cache;
+        const parsed = JSON.parse(raw);
+        this._cacheRaw = raw; this._cache = parsed;
+        return parsed;
+      }
       // Migrate from v1 if exists
       const old = localStorage.getItem('twr_agent_scores');
       if (old) {
@@ -872,7 +879,9 @@ const AgentScores = {
   save(kb) {
     if (!kb.meta) kb.meta = {};
     kb.meta.lastUpdate = Date.now();
-    localStorage.setItem(this.KEY, JSON.stringify(kb));
+    const raw = JSON.stringify(kb);
+    localStorage.setItem(this.KEY, raw);
+    this._cacheRaw = raw; this._cache = kb;   // keep cache in sync
   },
 
   /** Generic record — เรียกจากทั้ง Journal และ Backtest */
