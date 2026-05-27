@@ -1976,9 +1976,142 @@ window.BotBridge = BotBridge;
      🧠 Strategy Officer · 📊 Accountant · 💻 Dev · 🤖 Claude Advisor
    ═══════════════════════════════════════════════════════ */
 const Company = {
+  chatLog: [],   // {role:'user'|'sec', text}
+
   refresh() {
     const el = document.getElementById('company-body');
     if (el) el.innerHTML = this.render();
+    this._renderChat();
+  },
+
+  // ═══ SECRETARY CHAT BRAIN (rule-based Thai/EN Q&A + command exec) ═══
+  askSecretary(text) {
+    if (!text || !text.trim()) return;
+    this.chatLog.push({ role: 'user', text: text.trim() });
+    const reply = this._secretaryRespond(text.trim().toLowerCase());
+    this.chatLog.push({ role: 'sec', text: reply });
+    if (this.chatLog.length > 40) this.chatLog = this.chatLog.slice(-40);
+    this._renderChat();
+  },
+
+  _secretaryRespond(q) {
+    const bot = BotBridge?.lastStatus;
+    const cmd = TradingWarRoom?.lastCmd;
+    const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
+    const has = (...kw) => kw.some(k => q.includes(k));
+
+    // ─── Commands ───
+    if (has('ปิดทุก','ปิดหมด','close all','ปิดออเดอร์','ปิดไม้')) {
+      if (typeof BotBridge !== 'undefined') BotBridge.sendCommand('close_all');
+      return '🔴 รับทราบค่ะ CEO — สั่ง Close All ให้ทีมเทรดแล้ว EA จะปิดทุก position ภายใน 15 วินาที';
+    }
+    if (has('หยุดบอท','พักเทรด','pause','หยุดเทรด')) {
+      if (typeof BotBridge !== 'undefined') BotBridge.sendCommand('pause');
+      return '⏸ ค่ะ สั่ง Pause ให้ทีมเทรดแล้ว — บอทจะไม่เปิดไม้ใหม่ แต่ position เก่ายังดูแลต่อนะคะ';
+    }
+    if (has('เริ่มเทรด','resume','ทำงานต่อ','ปลดล็อก')) {
+      if (typeof BotBridge !== 'undefined') BotBridge.sendCommand('resume');
+      return '▶️ ค่ะ สั่ง Resume แล้ว — ทีมเทรดกลับมาทำงานต่อแล้วค่ะ';
+    }
+    if (has('autopilot','auto pilot','ออโต้','อัตโนมัติ','เปิดออโต้')) {
+      const on = !Settings.get('autoPilot', false);
+      Company.setAutoPilot(on);
+      return on
+        ? '🤖 เปิด AUTO PILOT แล้วค่ะ! ตอนนี้ทีมกลยุทธ์ + เทรดจะตัดสินใจเอง 100% เมื่อเจอ Grade A+ จะส่งให้ EA เทรดทันที CEO ไม่ต้องกดอะไร'
+        : '🛑 ปิด AUTO PILOT แล้วค่ะ — กลับมาโหมด manual (CEO อนุมัติเอง)';
+    }
+
+    // ─── Status questions ───
+    if (has('สถานะ','status','เป็นไง','ภาพรวม','ตอนนี้')) {
+      if (!bot) return '📭 ยังไม่ได้เชื่อม EA ค่ะ — ตั้ง Bot Bridge URL ใน Settings ก่อนนะคะ';
+      const onl = bot.online ? '🟢 ONLINE' : '🔴 OFFLINE';
+      return `รายงานสถานะค่ะ:\n${onl} · Balance $${(bot.balance||0).toFixed(2)} · Equity $${(bot.equity||0).toFixed(2)}\nToday P/L $${(bot.todayPnL||0).toFixed(2)} (${bot.todayWins||0}W/${bot.todayLosses||0}L)\nOpen positions: ${(bot.positions||[]).length} · Mode: ${bot.mode||'?'}`;
+    }
+    if (has('กำไร','ขาดทุน','pnl','p/l','เงิน','balance','บาลานซ์')) {
+      if (!bot) return '📭 ยังไม่มีข้อมูลบัญชีค่ะ';
+      const pnl = bot.todayPnL || 0;
+      const emo = pnl > 0 ? '🟢 กำไร' : pnl < 0 ? '🔴 ขาดทุน' : '⚪ เสมอตัว';
+      return `วันนี้ ${emo} $${pnl.toFixed(2)} ค่ะ\nBalance: $${(bot.balance||0).toFixed(2)} · Equity: $${(bot.equity||0).toFixed(2)}\nLive trades สะสม: ${live.count} ไม้ · WR ${(live.wins+live.losses)>0?((live.wins/(live.wins+live.losses))*100).toFixed(0):'—'}% · Total ${live.totalR>0?'+':''}${live.totalR.toFixed(1)}R`;
+    }
+    if (has('ทำไมไม่เทรด','ไม่ออกไม้','ไม่เข้า','ทำไมไม่เข้า','รออะไร')) {
+      if (cmd && (cmd.signal === 'buy' || cmd.signal === 'sell')) {
+        return `จริง ๆ มีสัญญาณ ${cmd.signal.toUpperCase()} ${cmd.sym} Grade ${cmd.gradeInfo?.grade||'?'} อยู่ค่ะ — ถ้าเปิด Auto Pilot จะเทรดทันที หรือ CEO กดเองได้`;
+      }
+      return 'ตอนนี้ทีมเทรดยังไม่เจอ setup ที่มั่นใจพอค่ะ 🔍\nเหตุผล: RSI ยังไม่ extreme / ราคายังไม่แตะ Bollinger / team consensus < 55%\nทีมกำลังเฝ้าตลาดอยู่ รอจังหวะดี ๆ ค่ะ';
+    }
+    if (has('สัญญาณ','signal','เข้าไม้ไหน','เทรดอะไร')) {
+      if (cmd && (cmd.signal === 'buy' || cmd.signal === 'sell')) {
+        return `สัญญาณล่าสุดค่ะ: ${cmd.signal.toUpperCase()} ${cmd.sym} @ ${cmd.entry}\nSL ${cmd.sl} · TP1 ${cmd.tp1} · Grade ${cmd.gradeInfo?.grade||'?'} · Conf ${cmd.conf}%`;
+      }
+      return 'ตอนนี้ยังไม่มีสัญญาณ buy/sell ค่ะ — ทุกทีมอยู่ในโหมด WAIT/WATCH';
+    }
+    if (has('risk','เสี่ยง','พอร์ต','portfolio','stop out')) {
+      if (!bot) return 'ยังไม่มีข้อมูล risk ค่ะ';
+      const r = parseFloat(bot.portfolioRisk)||0, m = parseFloat(bot.maxPortfolioRisk)||6;
+      return `Portfolio risk ตอนนี้ ${r.toFixed(1)}% จากเพดาน ${m.toFixed(0)}% ค่ะ\n${r>=m?'🔴 ถึงเพดานแล้ว — Risk Officer บล็อกไม้ใหม่':r>=m*0.7?'🟡 เริ่มสูง ระวังหน่อยนะคะ':'🟢 ยังปลอดภัยค่ะ'}`;
+    }
+    if (has('กลยุทธ์','strategy','agent ไหนดี','เทคนิคไหน','ปรับ')) {
+      return 'เรื่องกลยุทธ์ ขอประสานกับ 🧠 Strategy Officer นะคะ —\nดูได้ที่ panel Strategy Officer ด้านล่าง หรือกด 📓 JOURNAL เพื่อดู KB stats เต็ม ๆ\nถ้าอยากปรับอัตโนมัติ กดปุ่ม "ปรับกลยุทธ์" ได้เลยค่ะ';
+    }
+    if (has('สวัสดี','hello','hi','หวัดดี','ดีค่ะ','ดีครับ')) {
+      return 'สวัสดีค่ะ CEO 👋 ดิฉันเป็นเลขาประจำบริษัทค่ะ\nถามได้เลยนะคะ เช่น "สถานะตอนนี้", "กำไรเท่าไหร่", "ทำไมไม่เทรด", "ปิดทุกไม้", "เปิด autopilot"';
+    }
+    if (has('ช่วย','help','ทำอะไรได้','คำสั่ง')) {
+      return 'ดิฉันช่วยได้หลายอย่างค่ะ:\n📊 "สถานะ" / "กำไร" — รายงานบัญชี\n🔍 "ทำไมไม่เทรด" — อธิบายสถานการณ์\n🔴 "ปิดทุกไม้" / "หยุดบอท" / "เริ่มเทรด" — สั่งงานทีม\n🤖 "เปิด autopilot" — ให้ทีมตัดสินใจเอง\n🧠 "กลยุทธ์" — ประสานทีมกลยุทธ์';
+    }
+
+    // ─── Fallback ───
+    return 'ขอโทษค่ะ ดิฉันยังไม่เข้าใจคำถามนี้ 🙏\nลองถามแบบนี้นะคะ: "สถานะตอนนี้", "กำไรเท่าไหร่", "ทำไมไม่เทรด", "ปิดทุกไม้", "เปิด autopilot", หรือพิมพ์ "ช่วย"';
+  },
+
+  _renderChat() {
+    const el = document.getElementById('sec-chat-log');
+    if (!el) return;
+    if (this.chatLog.length === 0) {
+      el.innerHTML = `<div style="font-size:9px;color:var(--gray);text-align:center;padding:20px">
+        💬 คุยกับเลขาได้เลยค่ะ<br>เช่น "สถานะตอนนี้", "กำไรเท่าไหร่", "เปิด autopilot"</div>`;
+      return;
+    }
+    el.innerHTML = this.chatLog.map(m => {
+      if (m.role === 'user') {
+        return `<div style="text-align:right;margin:6px 0">
+          <span style="display:inline-block;background:var(--gold);color:#000;padding:6px 10px;border-radius:8px 8px 0 8px;font-size:10px;max-width:80%;text-align:left">${m.text}</span>
+          <div style="font-size:7px;color:var(--gray);margin-top:2px">👔 CEO</div>
+        </div>`;
+      }
+      return `<div style="text-align:left;margin:6px 0">
+        <span style="display:inline-block;background:var(--bg-card);border:1px solid var(--teal);color:var(--white);padding:6px 10px;border-radius:8px 8px 8px 0;font-size:10px;max-width:85%;text-align:left;white-space:pre-line">${m.text}</span>
+        <div style="font-size:7px;color:var(--teal);margin-top:2px">📋 เลขา Janie</div>
+      </div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  },
+
+  _onChatKey(e) {
+    if (e.key === 'Enter') {
+      const inp = document.getElementById('sec-chat-input');
+      this.askSecretary(inp.value);
+      inp.value = '';
+    }
+  },
+
+  sendChat() {
+    const inp = document.getElementById('sec-chat-input');
+    this.askSecretary(inp.value);
+    inp.value = '';
+  },
+
+  // ═══ AUTO PILOT ═══
+  setAutoPilot(on) {
+    Settings.set('autoPilot', on);
+    if (on) {
+      // Enable full autonomy chain
+      Settings.set('webAISignalsToEA', true);   // web → EA signals
+      UI.addLog('CMD', 'AutoPilot', '🤖 AUTO PILOT ON — Strategy + Trade teams เทรดเอง 100%');
+    } else {
+      UI.addLog('CMD', 'AutoPilot', '🛑 AUTO PILOT OFF — กลับสู่ manual mode');
+    }
+    this.refresh();
   },
 
   // Consolidate a team report into a single "Trader" persona
@@ -2020,26 +2153,26 @@ const Company = {
     const sigTxt = sig === 'buy' ? '▲ BUY' : sig === 'sell' ? '▼ SELL' : sig === 'watch' ? '⚠ WATCH' : '⏸ WAIT';
 
     return `
-      <div style="flex:1;min-width:0;padding:8px;border:1px solid ${sigCol};background:rgba(255,255,255,0.02)">
-        <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">
-          <span style="font-size:18px">${face}</span>
-          <div style="line-height:1.2">
-            <div style="font-size:8px;color:var(--gold)">${name}</div>
-            <div style="font-size:5px;color:var(--gray)">${sym} Specialist</div>
+      <div style="flex:1;min-width:0;padding:10px;border:1px solid ${sigCol};background:rgba(255,255,255,0.02);border-radius:4px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <span style="font-size:28px">${face}</span>
+          <div style="line-height:1.3">
+            <div style="font-size:11px;color:var(--gold);font-weight:bold">${name}</div>
+            <div style="font-size:7px;color:var(--gray)">${sym} Specialist</div>
           </div>
           <div style="margin-left:auto;text-align:right">
-            <div style="font-size:9px;color:${sigCol}">${sigTxt}</div>
-            <div style="font-size:6px;color:var(--gray)">${conf}%</div>
+            <div style="font-size:12px;color:${sigCol};font-weight:bold">${sigTxt}</div>
+            <div style="font-size:8px;color:var(--gray)">${conf}%</div>
           </div>
         </div>
-        <div style="font-size:6px;color:var(--white);margin:3px 0">
+        <div style="font-size:8px;color:var(--white);margin:4px 0">
           🤝 ${agree}/${total} เทคนิคเห็นตรงกัน
         </div>
-        <div style="height:4px;background:var(--bg-card);border:1px solid var(--border);margin:2px 0">
+        <div style="height:6px;background:var(--bg-card);border:1px solid var(--border);margin:3px 0;border-radius:3px;overflow:hidden">
           <div style="height:100%;width:${total>0?(agree/total*100):0}%;background:${sigCol}"></div>
         </div>
-        ${topTechs.length ? `<div style="font-size:5px;color:var(--green);margin-top:3px">⭐ ${topTechs.join(' · ')}</div>` : ''}
-        <div style="font-size:5px;color:var(--gray);margin-top:3px">KB Win Rate: <b style="color:var(--teal)">${kbWR}</b></div>
+        ${topTechs.length ? `<div style="font-size:7px;color:var(--green);margin-top:4px">⭐ ${topTechs.join(' · ')}</div>` : ''}
+        <div style="font-size:7px;color:var(--gray);margin-top:4px">KB Win Rate: <b style="color:var(--teal)">${kbWR}</b></div>
       </div>`;
   },
 
@@ -2078,25 +2211,25 @@ const Company = {
     const worst = sorted.slice(-3).reverse();
     const fmt = a => `${a.name} <b style="color:${a.R>0?'var(--green)':'var(--red)'}">${a.R>0?'+':''}${(a.R||0).toFixed(0)}R</b> (${a.t||0}t)`;
     return `
-      <div style="font-size:6px;color:var(--gray);margin-bottom:4px">📚 KB: ${live} live + ${bt} backtest trades</div>
-      <div style="font-size:6px;color:var(--green);margin-bottom:2px">🏆 Top performers:</div>
-      ${best.map(a => `<div style="font-size:5px;padding:1px 0">${fmt(a)}</div>`).join('')}
-      <div style="font-size:6px;color:var(--red);margin:4px 0 2px">⚠️ Underperformers:</div>
-      ${worst.map(a => `<div style="font-size:5px;padding:1px 0">${fmt(a)}</div>`).join('')}
-      <div style="margin-top:6px">
-        <button class="btn btn-secondary" style="font-size:6px;padding:3px 6px" onclick="Modal.open('journal')">📊 รายงานเต็ม</button>
-        <button class="btn btn-secondary" style="font-size:6px;padding:3px 6px" onclick="AgentScores.applyRecommended()">⚡ ปรับกลยุทธ์</button>
+      <div style="font-size:8px;color:var(--gray);margin-bottom:5px">📚 KB: ${live} live + ${bt} backtest trades</div>
+      <div style="font-size:8px;color:var(--green);margin-bottom:3px">🏆 Top performers:</div>
+      ${best.map(a => `<div style="font-size:8px;padding:2px 0">${fmt(a)}</div>`).join('')}
+      <div style="font-size:8px;color:var(--red);margin:5px 0 3px">⚠️ Underperformers:</div>
+      ${worst.map(a => `<div style="font-size:8px;padding:2px 0">${fmt(a)}</div>`).join('')}
+      <div style="margin-top:8px">
+        <button class="btn btn-secondary" style="font-size:8px;padding:5px 8px" onclick="Modal.open('journal')">📊 รายงานเต็ม</button>
+        <button class="btn btn-secondary" style="font-size:8px;padding:5px 8px" onclick="AgentScores.applyRecommended()">⚡ ปรับกลยุทธ์</button>
       </div>`;
   },
 
   _accountantReport() {
     const bot = BotBridge?.lastStatus;
     const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
-    if (!bot) return '<div style="font-size:6px;color:var(--gray)">รอข้อมูลจาก EA...</div>';
+    if (!bot) return '<div style="font-size:9px;color:var(--gray)">รอข้อมูลจาก EA...</div>';
     const wr = (live.wins+live.losses) > 0 ? (live.wins/(live.wins+live.losses)*100).toFixed(0) : '—';
     const pnlCol = (bot.todayPnL||0) > 0 ? 'var(--green)' : (bot.todayPnL||0) < 0 ? 'var(--red)' : 'var(--gray)';
     return `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:6px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px">
         <div>Balance: <b style="color:var(--teal)">$${(bot.balance||0).toFixed(2)}</b></div>
         <div>Equity: <b>$${(bot.equity||0).toFixed(2)}</b></div>
         <div>Today P/L: <b style="color:${pnlCol}">$${(bot.todayPnL||0).toFixed(2)}</b></div>
@@ -2118,7 +2251,7 @@ const Company = {
     checks.push({ ok: bot?.prices && Object.keys(bot.prices||{}).length > 0, label: 'Price feed flowing' });
     checks.push({ ok: !bot?.paused, label: 'Trading active (not paused)' });
     return checks.map(c =>
-      `<div style="font-size:6px;padding:1px 0;color:${c.ok?'var(--green)':'var(--red)'}">${c.ok?'✅':'❌'} ${c.label}</div>`
+      `<div style="font-size:9px;padding:2px 0;color:${c.ok?'var(--green)':'var(--red)'}">${c.ok?'✅':'❌'} ${c.label}</div>`
     ).join('');
   },
 
@@ -2142,58 +2275,94 @@ const Company = {
       notes.push('🛡 Portfolio risk เต็มเพดาน — รอ position เก่าปิดก่อนเปิดใหม่');
     }
     if (notes.length === 0) notes.push('👍 ทุกอย่างปกติ — ระบบทำงานตามแผน ไม่มีคำแนะนำเร่งด่วน');
-    return notes.map(n => `<div style="font-size:6px;color:var(--white);padding:2px 0;border-left:2px solid var(--purple);padding-left:6px;margin:2px 0">${n}</div>`).join('');
+    return notes.map(n => `<div style="font-size:9px;color:var(--white);padding:3px 0;border-left:2px solid var(--purple);padding-left:8px;margin:3px 0">${n}</div>`).join('');
   },
 
   render() {
     const gold = TradingWarRoom?.lastGold;
     const fx   = TradingWarRoom?.lastFX;
+    const autoPilot = Settings.get('autoPilot', false);
+    const apCol = autoPilot ? 'var(--green)' : 'var(--gray)';
     return `
-      <!-- CEO bar -->
-      <div style="display:flex;align-items:center;gap:8px;padding:8px;background:linear-gradient(135deg,rgba(255,215,0,0.1),transparent);border:1px solid var(--gold);margin-bottom:8px">
-        <span style="font-size:24px">👔</span>
+      <!-- CEO bar + Auto Pilot -->
+      <div style="display:flex;align-items:center;gap:12px;padding:14px;background:linear-gradient(135deg,rgba(255,215,0,0.12),transparent);border:2px solid var(--gold);margin-bottom:12px;border-radius:6px">
+        <span style="font-size:40px">👔</span>
         <div>
-          <div style="font-size:9px;color:var(--gold)">CEO — คุณ</div>
-          <div style="font-size:6px;color:var(--gray)">Human-in-the-loop · ตัดสินใจสุดท้าย · ตั้ง risk limits</div>
+          <div style="font-size:14px;color:var(--gold);font-weight:bold">CEO — คุณ</div>
+          <div style="font-size:9px;color:var(--gray);margin-top:2px">Human-in-the-loop · ตั้ง risk limits</div>
         </div>
-        <div style="margin-left:auto;display:flex;gap:4px">
-          <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--red);color:#fff" onclick="BotBridge.sendCommand('close_all')">🔴 Close All</button>
-          <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--orange)" onclick="BotBridge.sendCommand('pause')">⏸ Pause</button>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button class="btn" style="font-size:10px;padding:8px 14px;background:${autoPilot?'var(--green)':'#333'};color:${autoPilot?'#000':'#aaa'};border:2px solid ${apCol};font-weight:bold" onclick="Company.setAutoPilot(${!autoPilot})">
+            🤖 AUTO PILOT: ${autoPilot ? 'ON' : 'OFF'}
+          </button>
+          <button class="btn" style="font-size:10px;padding:8px 14px;background:var(--red);color:#fff;border:none" onclick="BotBridge.sendCommand('close_all')">🔴 Close All</button>
+          <button class="btn" style="font-size:10px;padding:8px 14px;background:var(--orange);color:#000;border:none" onclick="BotBridge.sendCommand('pause')">⏸ Pause</button>
         </div>
       </div>
 
-      <!-- Secretary briefing -->
-      <div style="padding:8px;border:1px solid var(--teal);background:rgba(0,255,255,0.05);margin-bottom:8px">
-        <div style="font-size:7px;color:var(--teal);margin-bottom:4px">📋 เลขา — Briefing วันนี้</div>
-        ${this._secretaryBriefing()}
+      ${autoPilot ? `<div style="padding:8px 14px;background:rgba(0,255,65,0.1);border:1px solid var(--green);margin-bottom:12px;font-size:10px;color:var(--green)">
+        🤖 <b>AUTO PILOT ทำงานอยู่</b> — ทีมกลยุทธ์ + เทรดตัดสินใจเอง 100% เมื่อเจอ Grade A+ จะส่งเข้า EA ทันที (CEO ไม่ต้องกดอะไร)
+      </div>` : ''}
+
+      <!-- 2-column: left = office, right = secretary chat -->
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+
+        <!-- LEFT: office floor -->
+        <div>
+          <!-- Trade Desk: 3 traders -->
+          <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 3 Traders</div>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
+            ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
+            ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
+          </div>
+
+          <!-- departments -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div style="padding:10px;border:1px solid var(--purple);background:rgba(120,80,255,0.05);border-radius:4px">
+              <div style="font-size:10px;color:var(--purple);margin-bottom:6px;font-weight:bold">🧠 Strategy Officer</div>
+              ${this._strategyReport()}
+            </div>
+            <div style="padding:10px;border:1px solid var(--green);background:rgba(0,255,65,0.05);border-radius:4px">
+              <div style="font-size:10px;color:var(--green);margin-bottom:6px;font-weight:bold">📊 Accountant</div>
+              ${this._accountantReport()}
+            </div>
+            <div style="padding:10px;border:1px solid var(--orange);background:rgba(255,140,0,0.05);border-radius:4px">
+              <div style="font-size:10px;color:var(--orange);margin-bottom:6px;font-weight:bold">💻 Dev Monitor</div>
+              ${this._devMonitor()}
+            </div>
+            <div style="padding:10px;border:1px solid #a78bfa;background:rgba(167,139,250,0.08);border-radius:4px">
+              <div style="font-size:10px;color:#a78bfa;margin-bottom:6px;font-weight:bold">🤖 Claude — Board Advisor</div>
+              ${this._claudeAdvisory()}
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Secretary chat -->
+        <div style="display:flex;flex-direction:column;border:2px solid var(--teal);border-radius:6px;background:rgba(0,255,255,0.03);height:520px">
+          <div style="padding:10px;border-bottom:1px solid var(--teal);display:flex;align-items:center;gap:8px">
+            <span style="font-size:24px">📋</span>
+            <div>
+              <div style="font-size:11px;color:var(--teal);font-weight:bold">เลขา Janie</div>
+              <div style="font-size:8px;color:var(--gray)">Secretary · ประสานงานทุกแผนก</div>
+            </div>
+            <span style="margin-left:auto;font-size:8px;color:var(--green)">🟢 พร้อมคุย</span>
+          </div>
+          <div id="sec-chat-log" style="flex:1;overflow-y:auto;padding:10px"></div>
+          <div style="padding:8px;border-top:1px solid var(--teal);display:flex;gap:6px">
+            <input id="sec-chat-input" type="text" placeholder="ถามเลขา... เช่น สถานะตอนนี้, กำไรเท่าไหร่, เปิด autopilot"
+              style="flex:1;background:var(--bg-card);border:1px solid var(--border);color:var(--white);padding:8px;font-size:10px;font-family:inherit"
+              onkeydown="Company._onChatKey(event)">
+            <button class="btn btn-primary" style="font-size:10px;padding:8px 12px" onclick="Company.sendChat()">ส่ง</button>
+          </div>
+        </div>
       </div>
 
-      <!-- Trade Desk: 3 traders -->
-      <div style="font-size:7px;color:var(--gold);margin-bottom:4px">📈 TRADE DESK — 3 Traders</div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
-        ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
-        ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
-      </div>
-
-      <!-- 4 departments grid -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div style="padding:8px;border:1px solid var(--purple);background:rgba(120,80,255,0.05)">
-          <div style="font-size:7px;color:var(--purple);margin-bottom:4px">🧠 Strategy Officer</div>
-          ${this._strategyReport()}
-        </div>
-        <div style="padding:8px;border:1px solid var(--green);background:rgba(0,255,65,0.05)">
-          <div style="font-size:7px;color:var(--green);margin-bottom:4px">📊 Accountant</div>
-          ${this._accountantReport()}
-        </div>
-        <div style="padding:8px;border:1px solid var(--orange);background:rgba(255,140,0,0.05)">
-          <div style="font-size:7px;color:var(--orange);margin-bottom:4px">💻 Dev Monitor</div>
-          ${this._devMonitor()}
-        </div>
-        <div style="padding:8px;border:1px solid #a78bfa;background:rgba(167,139,250,0.08)">
-          <div style="font-size:7px;color:#a78bfa;margin-bottom:4px">🤖 Claude — Board Advisor</div>
-          ${this._claudeAdvisory()}
-        </div>
+      <!-- quick chat suggestions -->
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        ${['สถานะตอนนี้','กำไรเท่าไหร่','ทำไมไม่เทรด','สัญญาณล่าสุด','risk เท่าไหร่','เปิด autopilot','ปิดทุกไม้'].map(s =>
+          `<button class="btn btn-secondary" style="font-size:8px;padding:4px 8px" onclick="Company.askSecretary('${s}')">${s}</button>`
+        ).join('')}
       </div>
     `;
   },
