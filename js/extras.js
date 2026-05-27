@@ -2084,7 +2084,9 @@ const Office = {
                  : sig === 'watch' ? '#ff8c00' : sig === 'online' ? '#00ffc8' : '#7a8aa0';
     const speech = sig === 'buy' ? 'BUY!' : sig === 'sell' ? 'SELL!' : sig === 'watch' ? '...' : '';
     const spec = this._faces[faceKey] || this._faces.dev;
-    const head = (window.UI && UI.pixelFace) ? UI.pixelFace(spec, 40) : '';
+    const head = (window.UI && UI.pixelFace)
+      ? UI.pixelFace(spec, 40)
+      : `<div style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:${(spec.accColor||'#888')}33;color:${spec.accColor||'#ccc'};font-size:16px;font-weight:bold">${(name||'?').slice(0,1)}</div>`;
     return `
       <div onclick="${onclick}" title="คลิกดู ${name}" class="office-char" style="
         cursor:pointer;position:relative;text-align:center;
@@ -2487,8 +2489,10 @@ const Company = {
 
   // Consolidate a team report into a single "Trader" persona
   _traderCard(sym, teamData, faceKey, name) {
-    const spec = (window.Office && Office._faces[faceKey]) || (window.Office && Office._faces.dev);
-    const head = (window.UI && UI.pixelFace) ? UI.pixelFace(spec, 34) : '';
+    const spec = (window.Office && Office._faces[faceKey]) || (window.Office && Office._faces.dev) || { accColor:'#888' };
+    const head = (window.UI && UI.pixelFace)
+      ? UI.pixelFace(spec, 34)
+      : `<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:${(spec.accColor||'#888')}33;color:${spec.accColor||'#ccc'};font-size:14px;font-weight:bold">${(name||'?').slice(0,1)}</div>`;
     const headBox = `<span style="display:inline-block;background:#0b0f1a;border:1px solid #2a3550;border-radius:5px;padding:2px">${head}</span>`;
     if (!teamData) {
       return `<div style="flex:1;padding:8px;border:1px solid var(--border);opacity:0.5">
