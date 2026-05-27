@@ -405,7 +405,10 @@ const Backtest = {
       <div style="background:linear-gradient(90deg,rgba(157,78,221,0.15),transparent);border:1px solid var(--purple);padding:10px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div style="font-size:8px;color:var(--purple)">🤖 AUTO-OPTIMIZE — ทดสอบหลาย combinations + พัฒนาตัวเอง</div>
-          <button class="btn btn-secondary" onclick="AutoOptimize.start({maxCycles: 999})">🚀 Start Auto-Opt</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary" onclick="AutoOptimize.start({maxCycles: 999})">🚀 Start Auto-Opt</button>
+            <button class="btn" style="background:var(--red);color:#fff" onclick="AutoOptimize.stop()">⏹ STOP</button>
+          </div>
         </div>
         <div style="font-size:6px;color:var(--gray)">
           จะทดสอบทุก combinations ของ 3 symbols × 3 modes × 4 confidence × 3 ADX gates ต่อ cycle.<br>
@@ -696,6 +699,11 @@ const AutoOptimize = {
       el.innerHTML = '';
       return;
     }
+    // Throttle: re-render at most ~2×/sec so the DOM (and any buttons) isn't
+    // churned every 30ms (which made clicks miss).
+    const now = Date.now();
+    if (this.running && this._lastRender && (now - this._lastRender) < 500) return;
+    this._lastRender = now;
     const elapsed = ((Date.now() - this.startTs) / 60000).toFixed(1);
     const top = this.history.slice().sort((a,b) => b.score - a.score).slice(0, 5);
     const status = this.running ? '🤖 RUNNING' : '🏁 DONE';
@@ -717,7 +725,7 @@ const AutoOptimize = {
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:${sc};font-size:8px">
         <span>${status} — Cycle ${this.cycles} | Iter ${this.iterations} | Elapsed ${elapsed}m | Found ${this.history.length}</span>
-        ${this.running ? '<button class="btn btn-secondary" onclick="AutoOptimize.stop()">⏹ Stop</button>' : ''}
+        ${this.running ? '<span style="color:var(--gray);font-size:6px">↑ ใช้ปุ่ม STOP สีแดงด้านบน</span>' : ''}
       </div>
       <div style="font-size:7px;color:var(--gold);margin:4px 0">🏆 Top 5 Configs</div>
       <div class="j-table-wrap" style="max-height:140px">
