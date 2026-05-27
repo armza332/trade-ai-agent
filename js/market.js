@@ -119,7 +119,7 @@ class MarketEngine {
     this.dxyTrend = null;    // +N = strong USD, -N = weak USD
 
     for (const sym in this.symbols) {
-      this.candles[sym] = this._genHistory(sym, 200);
+      this.candles[sym] = this._genHistory(sym, 600);   // Phase 25.7: more bars so backtest finds enough trades w/o API
       this.prices[sym]  = this.candles[sym].at(-1).close;
     }
   }
@@ -175,7 +175,7 @@ class MarketEngine {
           open: newClose, high: newClose, low: newClose, close: newClose,
           volume: 0, ts: Date.now(),
         });
-        if (this.candles[sym].length > 300) this.candles[sym].shift();
+        if (this.candles[sym].length > 700) this.candles[sym].shift();   // Phase 25.7: keep enough bars for backtest
       }
     }
   }

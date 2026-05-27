@@ -1699,7 +1699,7 @@ window.AdaptiveStrategy = AdaptiveStrategy;
    BOT BRIDGE — Read status from MT5 EA via Apps Script
    ═══════════════════════════════════════════════════════ */
 const BotBridge = {
-  POLL_SEC: 30,
+  POLL_SEC: 15,   // Phase 25.7: poll EA every 15s (was 30) — cards/positions update faster
   timer: null,
   lastStatus: null,
 
