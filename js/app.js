@@ -188,6 +188,14 @@ const TradingWarRoom = {
       snapshot('EUR-MACD',       fxR.eur?.agents?.macd),
     ].filter(Boolean);
 
+    // Phase 15.1: stash latest reports for Company View
+    this.lastGold = goldR;
+    this.lastFX   = fxR;
+    this.lastCmd  = cmdR;
+    if (typeof Company !== 'undefined' && document.getElementById('modal-company')?.style.display === 'flex') {
+      Company.refresh();
+    }
+
     // Render UI
     UI.renderGoldTeam(goldR);
     UI.renderCurrencyTeam(fxR);

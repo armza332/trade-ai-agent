@@ -6,7 +6,7 @@
   <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="pragma" content="no-cache">
   <meta http-equiv="expires" content="0">
-  <title>TRADING WAR ROOM — AI Agent System v15.0</title>
+  <title>TRADING WAR ROOM — AI Agent System v15.1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -75,6 +75,7 @@
   <div class="header-right">
     <button class="hdr-btn" onclick="Modal.open('backtest')" data-i18n="btn.backtest" data-i18n-title="bt.title">🔬 BACKTEST</button>
     <button class="hdr-btn" onclick="Modal.open('journal')" data-i18n="btn.journal">📓 JOURNAL</button>
+    <button class="hdr-btn" onclick="Modal.open('company')" title="Company / Org View">🏢 COMPANY</button>
     <button class="hdr-btn" onclick="Modal.open('botstatus')" title="MT5 Bot Status">🤖 BOT</button>
     <button class="hdr-btn" onclick="Modal.open('help')" data-i18n="btn.help">❓ HELP</button>
     <button class="hdr-btn" onclick="Modal.open('settings')" data-i18n="btn.settings">⚙ SETTINGS</button>
@@ -478,6 +479,19 @@
   </div>
 </div>
 
+<!-- ═══════════════════ COMPANY MODAL ═══════════════════ -->
+<div id="modal-company" class="modal" style="display:none">
+  <div class="modal-box modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">🏢 TRADING WAR ROOM CORP — Personal AI Trading Firm</div>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div class="modal-body" id="company-body">
+      <div style="padding:20px;text-align:center;font-size:7px;color:var(--gray)">Loading company...</div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════════ BOT STATUS MODAL ═══════════════════ -->
 <div id="modal-botstatus" class="modal" style="display:none">
   <div class="modal-box modal-lg">
@@ -514,13 +528,13 @@
 </div>
 
 <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-<script src="js/i18n.js?v=15.0"></script>
-<script src="js/market.js?v=15.0"></script>
-<script src="js/agents.js?v=15.0"></script>
-<script src="js/ui.js?v=15.0"></script>
-<script src="js/extras.js?v=15.0"></script>
-<script src="js/backtest.js?v=15.0"></script>
-<script src="js/app.js?v=15.0"></script>
+<script src="js/i18n.js?v=15.1"></script>
+<script src="js/market.js?v=15.1"></script>
+<script src="js/agents.js?v=15.1"></script>
+<script src="js/ui.js?v=15.1"></script>
+<script src="js/extras.js?v=15.1"></script>
+<script src="js/backtest.js?v=15.1"></script>
+<script src="js/app.js?v=15.1"></script>
 
 </body>
 </html>

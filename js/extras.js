@@ -506,6 +506,11 @@ const Modal = {
       BotBridge.tick();   // fetch immediately when opened
       if (!BotBridge.timer) BotBridge.start();
     }
+    if (name === 'company' && typeof Company !== 'undefined') {
+      // ensure BotBridge polling so accountant/dev data is fresh
+      if (typeof BotBridge !== 'undefined') { BotBridge.tick(); if (!BotBridge.timer) BotBridge.start(); }
+      Company.refresh();
+    }
   },
   close() {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -1963,6 +1968,237 @@ const BotBridge = {
   },
 };
 window.BotBridge = BotBridge;
+
+/* ═══════════════════════════════════════════════════════
+   COMPANY VIEW (Phase 15.1) — Personal AI Trading Firm
+   Reframes the whole system as an org:
+     👔 CEO (you) · 📋 Secretary · 📈 3 Traders ·
+     🧠 Strategy Officer · 📊 Accountant · 💻 Dev · 🤖 Claude Advisor
+   ═══════════════════════════════════════════════════════ */
+const Company = {
+  refresh() {
+    const el = document.getElementById('company-body');
+    if (el) el.innerHTML = this.render();
+  },
+
+  // Consolidate a team report into a single "Trader" persona
+  _traderCard(sym, teamData, face, name) {
+    if (!teamData) {
+      return `<div style="flex:1;padding:8px;border:1px solid var(--border);opacity:0.5">
+        <div style="font-size:8px">${face} ${name}</div>
+        <div style="font-size:6px;color:var(--gray)">— ยังไม่มีข้อมูล —</div>
+      </div>`;
+    }
+    const sig  = teamData.signal || teamData.head?.signal || 'wait';
+    const conf = teamData.conf   || teamData.head?.conf   || 0;
+    const agents = teamData.agents || {};
+    // Count technique agreement
+    const techs = Object.entries(agents).filter(([k,v]) => v);
+    const agree = techs.filter(([k,v]) => v.signal === sig).length;
+    const total = techs.length;
+    // Top 3 agreeing techniques
+    const topTechs = techs
+      .filter(([k,v]) => v.signal === sig && (sig === 'buy' || sig === 'sell'))
+      .sort((a,b) => (b[1].conf||0) - (a[1].conf||0))
+      .slice(0, 3)
+      .map(([k]) => k.toUpperCase());
+
+    // KB win rate for this symbol
+    let kbWR = '—';
+    if (typeof AgentScores !== 'undefined') {
+      try {
+        const stats = AgentScores.stats().filter(a => a.name.includes(sym.replace('USD','')));
+        if (stats.length) {
+          const tot = stats.reduce((s,a) => s + (a.t||0), 0);
+          const won = stats.reduce((s,a) => s + (a.w||0), 0);
+          if (tot > 0) kbWR = ((won/tot)*100).toFixed(0) + '%';
+        }
+      } catch {}
+    }
+
+    const sigCol = sig === 'buy' ? 'var(--green)' : sig === 'sell' ? 'var(--red)' : sig === 'watch' ? 'var(--orange)' : 'var(--yellow)';
+    const sigTxt = sig === 'buy' ? '▲ BUY' : sig === 'sell' ? '▼ SELL' : sig === 'watch' ? '⚠ WATCH' : '⏸ WAIT';
+
+    return `
+      <div style="flex:1;min-width:0;padding:8px;border:1px solid ${sigCol};background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">
+          <span style="font-size:18px">${face}</span>
+          <div style="line-height:1.2">
+            <div style="font-size:8px;color:var(--gold)">${name}</div>
+            <div style="font-size:5px;color:var(--gray)">${sym} Specialist</div>
+          </div>
+          <div style="margin-left:auto;text-align:right">
+            <div style="font-size:9px;color:${sigCol}">${sigTxt}</div>
+            <div style="font-size:6px;color:var(--gray)">${conf}%</div>
+          </div>
+        </div>
+        <div style="font-size:6px;color:var(--white);margin:3px 0">
+          🤝 ${agree}/${total} เทคนิคเห็นตรงกัน
+        </div>
+        <div style="height:4px;background:var(--bg-card);border:1px solid var(--border);margin:2px 0">
+          <div style="height:100%;width:${total>0?(agree/total*100):0}%;background:${sigCol}"></div>
+        </div>
+        ${topTechs.length ? `<div style="font-size:5px;color:var(--green);margin-top:3px">⭐ ${topTechs.join(' · ')}</div>` : ''}
+        <div style="font-size:5px;color:var(--gray);margin-top:3px">KB Win Rate: <b style="color:var(--teal)">${kbWR}</b></div>
+      </div>`;
+  },
+
+  _secretaryBriefing() {
+    const cmd = TradingWarRoom?.lastCmd;
+    const bot = BotBridge?.lastStatus;
+    const lines = [];
+    if (cmd) {
+      const g = cmd.gradeInfo?.grade || '?';
+      if (cmd.signal === 'buy' || cmd.signal === 'sell') {
+        lines.push(`📢 มีสัญญาณ <b style="color:var(--gold)">Grade ${g}</b> — ${cmd.signal.toUpperCase()} ${cmd.sym} @ ${cmd.entry}`);
+      } else {
+        lines.push(`💤 ยังไม่มี setup ที่ชัดเจน — ทีมกำลังเฝ้าตลาด`);
+      }
+    }
+    if (bot) {
+      if (!bot.online) lines.push(`🔴 <b style="color:var(--red)">EA OFFLINE</b> — ตรวจ MT5 ด่วน!`);
+      else lines.push(`🟢 EA ONLINE · Balance $${(bot.balance||0).toFixed(2)} · Today P/L $${(bot.todayPnL||0).toFixed(2)}`);
+      const risk = parseFloat(bot.portfolioRisk) || 0;
+      const maxR = parseFloat(bot.maxPortfolioRisk) || 6;
+      if (risk >= maxR) lines.push(`⚠️ <b style="color:var(--red)">Portfolio risk ${risk.toFixed(1)}%</b> ถึงเพดาน — หยุดเปิดไม้ใหม่`);
+    } else {
+      lines.push(`📭 ยังไม่ได้เชื่อม EA — ตั้ง Bot Bridge URL ใน Settings`);
+    }
+    return lines.map(l => `<div style="font-size:6px;color:var(--white);padding:2px 0">${l}</div>`).join('');
+  },
+
+  _strategyReport() {
+    if (typeof AgentScores === 'undefined') return '<div style="font-size:6px;color:var(--gray)">KB ไม่พร้อม</div>';
+    const kb = AgentScores.load();
+    const live = kb.meta?.liveTrades || 0;
+    const bt   = kb.meta?.backtestTrades || 0;
+    const stats = AgentScores.stats();
+    const sorted = [...stats].sort((a,b) => (b.R||0) - (a.R||0));
+    const best = sorted.slice(0, 3);
+    const worst = sorted.slice(-3).reverse();
+    const fmt = a => `${a.name} <b style="color:${a.R>0?'var(--green)':'var(--red)'}">${a.R>0?'+':''}${(a.R||0).toFixed(0)}R</b> (${a.t||0}t)`;
+    return `
+      <div style="font-size:6px;color:var(--gray);margin-bottom:4px">📚 KB: ${live} live + ${bt} backtest trades</div>
+      <div style="font-size:6px;color:var(--green);margin-bottom:2px">🏆 Top performers:</div>
+      ${best.map(a => `<div style="font-size:5px;padding:1px 0">${fmt(a)}</div>`).join('')}
+      <div style="font-size:6px;color:var(--red);margin:4px 0 2px">⚠️ Underperformers:</div>
+      ${worst.map(a => `<div style="font-size:5px;padding:1px 0">${fmt(a)}</div>`).join('')}
+      <div style="margin-top:6px">
+        <button class="btn btn-secondary" style="font-size:6px;padding:3px 6px" onclick="Modal.open('journal')">📊 รายงานเต็ม</button>
+        <button class="btn btn-secondary" style="font-size:6px;padding:3px 6px" onclick="AgentScores.applyRecommended()">⚡ ปรับกลยุทธ์</button>
+      </div>`;
+  },
+
+  _accountantReport() {
+    const bot = BotBridge?.lastStatus;
+    const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
+    if (!bot) return '<div style="font-size:6px;color:var(--gray)">รอข้อมูลจาก EA...</div>';
+    const wr = (live.wins+live.losses) > 0 ? (live.wins/(live.wins+live.losses)*100).toFixed(0) : '—';
+    const pnlCol = (bot.todayPnL||0) > 0 ? 'var(--green)' : (bot.todayPnL||0) < 0 ? 'var(--red)' : 'var(--gray)';
+    return `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:6px">
+        <div>Balance: <b style="color:var(--teal)">$${(bot.balance||0).toFixed(2)}</b></div>
+        <div>Equity: <b>$${(bot.equity||0).toFixed(2)}</b></div>
+        <div>Today P/L: <b style="color:${pnlCol}">$${(bot.todayPnL||0).toFixed(2)}</b></div>
+        <div>Today W/L: <b style="color:var(--gold)">${bot.todayWins||0}/${bot.todayLosses||0}</b></div>
+        <div>Live trades: <b>${live.count}</b></div>
+        <div>Live WR: <b style="color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</b></div>
+        <div>Total R: <b style="color:${live.totalR>0?'var(--green)':'var(--red)'}">${live.totalR>0?'+':''}${live.totalR.toFixed(1)}R</b></div>
+        <div>Open: <b>${(bot.positions||[]).length}</b></div>
+      </div>`;
+  },
+
+  _devMonitor() {
+    const bot = BotBridge?.lastStatus;
+    const url = Settings.get('botBridgeURL','');
+    const checks = [];
+    checks.push({ ok: url.length > 20, label: 'Bot Bridge URL' });
+    checks.push({ ok: !!bot, label: 'EA data received' });
+    checks.push({ ok: bot?.online, label: 'EA online (<5min)' });
+    checks.push({ ok: bot?.prices && Object.keys(bot.prices||{}).length > 0, label: 'Price feed flowing' });
+    checks.push({ ok: !bot?.paused, label: 'Trading active (not paused)' });
+    return checks.map(c =>
+      `<div style="font-size:6px;padding:1px 0;color:${c.ok?'var(--green)':'var(--red)'}">${c.ok?'✅':'❌'} ${c.label}</div>`
+    ).join('');
+  },
+
+  _claudeAdvisory() {
+    // Generate advisory based on KB + live stats
+    const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
+    const notes = [];
+    const wr = (live.wins+live.losses) > 0 ? (live.wins/(live.wins+live.losses)*100) : null;
+    if (live.count < 10) {
+      notes.push('🎓 ข้อมูล live ยังน้อย — ปล่อยให้บอทเทรด + รัน Auto-Optimize เพิ่ม data ก่อนปรับใหญ่');
+    } else if (wr !== null && wr < 45) {
+      notes.push('⚠️ Live WR < 45% — แนะนำ Pause EA + review กลยุทธ์ผ่าน Strategy Officer ก่อนเทรดต่อ');
+    } else if (wr !== null && wr >= 60) {
+      notes.push('✅ Live WR ดี (≥60%) — strategy ใช้ได้ พิจารณาเพิ่ม RiskPercent เล็กน้อย (max 2%)');
+    }
+    if (live.totalR < -5) {
+      notes.push('🛑 ขาดทุนสะสม > 5R — Risk Officer ควรลด exposure, CEO พิจารณาหยุดพักทบทวน');
+    }
+    const bot = BotBridge?.lastStatus;
+    if (bot && parseFloat(bot.portfolioRisk) >= parseFloat(bot.maxPortfolioRisk)) {
+      notes.push('🛡 Portfolio risk เต็มเพดาน — รอ position เก่าปิดก่อนเปิดใหม่');
+    }
+    if (notes.length === 0) notes.push('👍 ทุกอย่างปกติ — ระบบทำงานตามแผน ไม่มีคำแนะนำเร่งด่วน');
+    return notes.map(n => `<div style="font-size:6px;color:var(--white);padding:2px 0;border-left:2px solid var(--purple);padding-left:6px;margin:2px 0">${n}</div>`).join('');
+  },
+
+  render() {
+    const gold = TradingWarRoom?.lastGold;
+    const fx   = TradingWarRoom?.lastFX;
+    return `
+      <!-- CEO bar -->
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;background:linear-gradient(135deg,rgba(255,215,0,0.1),transparent);border:1px solid var(--gold);margin-bottom:8px">
+        <span style="font-size:24px">👔</span>
+        <div>
+          <div style="font-size:9px;color:var(--gold)">CEO — คุณ</div>
+          <div style="font-size:6px;color:var(--gray)">Human-in-the-loop · ตัดสินใจสุดท้าย · ตั้ง risk limits</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:4px">
+          <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--red);color:#fff" onclick="BotBridge.sendCommand('close_all')">🔴 Close All</button>
+          <button class="btn btn-secondary" style="font-size:6px;padding:4px 8px;background:var(--orange)" onclick="BotBridge.sendCommand('pause')">⏸ Pause</button>
+        </div>
+      </div>
+
+      <!-- Secretary briefing -->
+      <div style="padding:8px;border:1px solid var(--teal);background:rgba(0,255,255,0.05);margin-bottom:8px">
+        <div style="font-size:7px;color:var(--teal);margin-bottom:4px">📋 เลขา — Briefing วันนี้</div>
+        ${this._secretaryBriefing()}
+      </div>
+
+      <!-- Trade Desk: 3 traders -->
+      <div style="font-size:7px;color:var(--gold);margin-bottom:4px">📈 TRADE DESK — 3 Traders</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        ${this._traderCard('XAUUSD', gold, '🥷', 'XAU Trader')}
+        ${this._traderCard('AUDUSD', fx?.aud, '🏹', 'AUD Trader')}
+        ${this._traderCard('EURUSD', fx?.eur, '⚔️', 'EUR Trader')}
+      </div>
+
+      <!-- 4 departments grid -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="padding:8px;border:1px solid var(--purple);background:rgba(120,80,255,0.05)">
+          <div style="font-size:7px;color:var(--purple);margin-bottom:4px">🧠 Strategy Officer</div>
+          ${this._strategyReport()}
+        </div>
+        <div style="padding:8px;border:1px solid var(--green);background:rgba(0,255,65,0.05)">
+          <div style="font-size:7px;color:var(--green);margin-bottom:4px">📊 Accountant</div>
+          ${this._accountantReport()}
+        </div>
+        <div style="padding:8px;border:1px solid var(--orange);background:rgba(255,140,0,0.05)">
+          <div style="font-size:7px;color:var(--orange);margin-bottom:4px">💻 Dev Monitor</div>
+          ${this._devMonitor()}
+        </div>
+        <div style="padding:8px;border:1px solid #a78bfa;background:rgba(167,139,250,0.08)">
+          <div style="font-size:7px;color:#a78bfa;margin-bottom:4px">🤖 Claude — Board Advisor</div>
+          ${this._claudeAdvisory()}
+        </div>
+      </div>
+    `;
+  },
+};
+window.Company = Company;
 
 /* ═══════════════════════════════════════════════════════
    TOP-DOWN ANALYZER — เทรดเดอร์ตัวจริงคิดยังไง
