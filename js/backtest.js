@@ -484,7 +484,7 @@ const AutoOptimize = {
     const confs   = opts.confs   || [55, 65, 75, 85];
     const adxGates = opts.adxGates || [0, 20, 25];
     const maxCycles = opts.maxCycles || 200;
-    const refetchEachCycle = opts.refetchEachCycle ?? true;
+    const refetchEachCycle = opts.refetchEachCycle ?? false;   // Phase 25.6: reuse loaded candles by default (save API quota)
     // Phase 22.1: by default DON'T auto-stop on convergence — keep training
     // until the user presses STOP (or maxCycles / quota). Opt-in via opts.
     const stopOnConverge = opts.stopOnConverge ?? false;
@@ -507,24 +507,23 @@ const AutoOptimize = {
     const origTelegramOn = Settings.get('telegramOn');
     Settings.set('telegramOn', false);
 
+    let _quotaWarned = false;
     try {
       while (this.running && this.cycles < maxCycles) {
-        // Daily quota guard
-        if (typeof RateLimiter !== 'undefined' && !RateLimiter.quotaOK()) {
-          this._addLog('⛔ Daily quota ≥90% — auto-stopping Auto-Opt');
-          if (Settings.get('telegramOn')) {
-            await Telegram._send(`⛔ <b>Auto-Opt Stopped</b>\nDaily API quota ${RateLimiter.dailyUsed()}/${RateLimiter.DAILY_LIMIT} (>90%)\nResume tomorrow (midnight UTC).`);
-          }
-          this.running = false;
-          break;
+        // Phase 25.6: if API quota is exhausted, DON'T stop — just stop fetching
+        // and keep training on cached/generated candles (backtest falls back).
+        const apiOK = (typeof RateLimiter === 'undefined') || RateLimiter.quotaOK();
+        if (!apiOK && !_quotaWarned) {
+          _quotaWarned = true;
+          this._addLog('⚠️ API quota ≥90% — สลับใช้ข้อมูล cache (ไม่ fetch ใหม่) · เทรนต่อได้');
         }
 
         const cycleStart = Date.now();
         this.cycles++;
         this._addLog(`▶ Cycle ${this.cycles}/${maxCycles}`);
 
-        // Re-fetch fresh history
-        if (refetchEachCycle && this.cycles > 1) {
+        // Re-fetch fresh history only if enabled AND quota allows
+        if (refetchEachCycle && apiOK && this.cycles > 1) {
           await this._refetchAll(symbols);
         }
 
