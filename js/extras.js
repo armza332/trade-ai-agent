@@ -2832,6 +2832,49 @@ const Company = {
     });
   },
 
+  // PHASE 22.4: LIVE SCORECARD — real MT5 trades only (NOT backtest).
+  // This is the number that actually matters for judging the strategy.
+  liveScorecard() {
+    const trades = (typeof BotBridge !== 'undefined' && BotBridge.allTrades) ? BotBridge.allTrades : [];
+    const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
+    const bal = bot && typeof bot.balance === 'number' ? bot.balance : null;
+    const wrap = (inner) => `<div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--green);border-radius:6px;background:linear-gradient(90deg,rgba(0,255,65,0.08),transparent)">
+      <div style="font-size:10px;color:var(--green);font-weight:bold;margin-bottom:5px">📊 LIVE SCORECARD <span style="font-size:6px;color:#9aa">(เฉพาะไม้จริงใน MT5 · ไม่นับ backtest)</span></div>${inner}</div>`;
+    if (!trades.length) {
+      return wrap(`<div style="font-size:8px;color:#9aa">— ยังไม่มีไม้ปิดจริง — ${bal!=null?`พอร์ตตอนนี้ <b style="color:var(--gold)">$${bal.toFixed(2)}</b>`:'รอเชื่อม EA'} · เก็บให้ครบ 30-50 ไม้ก่อนตัดสินกลยุทธ์</div>`);
+    }
+    let w = 0, l = 0, R = 0, net = 0; const bySym = {};
+    trades.forEach(t => {
+      const win = t.outcome === 'win', loss = t.outcome === 'loss';
+      if (win) w++; else if (loss) l++;
+      R += parseFloat(t.rMult) || 0; net += parseFloat(t.profit) || 0;
+      const s = (t.sym || '').replace(/[mzcr.]+$/i, '').replace('USD', '') || '?';
+      if (!bySym[s]) bySym[s] = { w:0, l:0, R:0 };
+      if (win) bySym[s].w++; else if (loss) bySym[s].l++;
+      bySym[s].R += parseFloat(t.rMult) || 0;
+    });
+    const tot = w + l, wr = tot ? Math.round(w / tot * 100) : 0;
+    const rCol = R > 0 ? 'var(--green)' : R < 0 ? 'var(--red)' : '#9aa';
+    const netCol = net > 0 ? 'var(--green)' : net < 0 ? 'var(--red)' : '#9aa';
+    const cell = (lbl, val, col) => `<div style="text-align:center"><div style="font-size:6px;color:#9aa">${lbl}</div><div style="font-size:12px;font-weight:bold;color:${col||'#fff'}">${val}</div></div>`;
+    const symRows = Object.keys(bySym).map(s => {
+      const b = bySym[s]; const swr = (b.w+b.l)?Math.round(b.w/(b.w+b.l)*100):0;
+      const c = b.R>0?'var(--green)':b.R<0?'var(--red)':'#9aa';
+      return `<span style="font-size:7px;color:#9aa;margin-right:10px">${s}: <b style="color:${c}">${b.w}W/${b.l}L · ${b.R>0?'+':''}${b.R.toFixed(1)}R</b></span>`;
+    }).join('');
+    return wrap(`
+      <div style="display:flex;gap:14px;align-items:center;justify-content:space-around;margin-bottom:5px">
+        ${cell('ไม้จริง', tot, '#fff')}
+        ${cell('ชนะ', w, 'var(--green)')}
+        ${cell('แพ้', l, 'var(--red)')}
+        ${cell('WR', wr+'%', wr>=50?'var(--green)':'var(--orange)')}
+        ${cell('รวม R', (R>0?'+':'')+R.toFixed(1), rCol)}
+        ${cell('กำไรสุทธิ', (net>0?'+':'')+'$'+net.toFixed(2), netCol)}
+        ${bal!=null?cell('พอร์ต', '$'+bal.toFixed(2), 'var(--gold)'):''}
+      </div>
+      <div style="border-top:1px dashed #2a3550;padding-top:4px">${symRows||''}</div>`);
+  },
+
   renderTraders() {
     const gold = TradingWarRoom?.lastGold;
     const fx   = TradingWarRoom?.lastFX;
@@ -2840,7 +2883,7 @@ const Company = {
 
     const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
     const symMeta = { XAUUSD:{n:'🥇 GOLD DESK',c:'var(--gold)'}, AUDUSD:{n:'🇦🇺 AUD DESK',c:'#00ccff'}, EURUSD:{n:'🇪🇺 EUR DESK',c:'#4169e1'} };
-    let html = this._presetBar();
+    let html = this.liveScorecard() + this._presetBar();
     this._buildRoster().forEach(t => {
       const d = this.deskDecision(t.sym, teamFor(t.sym), bot);
       const m = symMeta[t.sym] || { n:t.sym, c:'var(--teal)' };
