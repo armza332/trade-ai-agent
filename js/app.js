@@ -289,7 +289,7 @@ const TradingWarRoom = {
 
     for (const sym of ['XAUUSD', 'AUDUSD', 'EURUSD']) {
       try {
-        const h = await this.market.fetchHistory(sym, '5min', 200, key);
+        const h = await this.market.fetchHistory(sym, '5min', 300, key);  // Phase 22.5: more context (was 200)
         if (h && h.length > 50) {
           this.market.applyHistory(sym, h);
           this._log('CMD', 'DataLoader', `📊 Loaded ${h.length} real 5m candles for ${sym}`);
