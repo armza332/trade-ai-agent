@@ -56,6 +56,15 @@ input bool    OnlyLondonNY       = true;          // Skip Asia session
 input int     SignalCooldownMin  = 30;            // Wait between signals
 input int     MaxOpenPositions   = 2;             // per symbol
 
+input group "=== RISK MANAGER (Phase 15) ==="
+input bool    UseBreakeven       = true;          // 🛡 Move SL to breakeven once in profit
+input double  BreakevenAtR       = 1.0;           // Move to BE when price hits +N×R profit
+input double  BreakevenLockR     = 0.1;           // Lock +0.1R profit (cover spread) at BE
+input bool    UseTrailing        = true;          // 🪤 Trail SL after breakeven
+input double  TrailStartR        = 1.5;           // Start trailing at +N×R
+input double  TrailStepR         = 0.5;           // Trail by N×R steps
+input double  MaxPortfolioRiskPct= 6.0;           // ⚠️ Max total open risk % of equity (stop-out guard)
+
 input group "=== SYSTEM ==="
 input int     MagicNumber        = 992511;
 input bool    EnableAlerts       = true;
@@ -319,6 +328,19 @@ void CheckSignal(string sym, int idx) {
    if (TimeCurrent() - lastSignalTime[idx] < effCooldownMin * 60) return;
    if (CountPositions(sym) >= effMaxPos) return;
 
+   // Phase 15: Portfolio risk guard — block new trade if total risk too high
+   double portRisk = PortfolioRiskPct();
+   if (portRisk >= MaxPortfolioRiskPct) {
+      scanState[idx].tag = "RISK-MAX";
+      static datetime lastWarn = 0;
+      if (TimeCurrent() - lastWarn > 300) {
+         PrintFormat("⚠️ Portfolio risk %.1f%% ≥ max %.1f%% — blocking new %s trade",
+                     portRisk, MaxPortfolioRiskPct, sym);
+         lastWarn = TimeCurrent();
+      }
+      return;
+   }
+
    if (rsiBuy && bbBuy && fibBuy)   { ExecuteTrade(sym, idx, true,  atr, rsi); return; }
    if (rsiSell && bbSell && fibSell){ ExecuteTrade(sym, idx, false, atr, rsi); return; }
 }
@@ -395,8 +417,92 @@ int CountPositions(string sym) {
    return count;
 }
 
+// Phase 15: Total open risk across all positions (% of equity) — stop-out guard
+double PortfolioRiskPct() {
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if (equity <= 0) return 0;
+   double totalRisk = 0;
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      if (!posInfo.SelectByIndex(i)) continue;
+      if (posInfo.Magic() != MagicNumber) continue;
+      double open = posInfo.PriceOpen();
+      double sl   = posInfo.StopLoss();
+      if (sl <= 0) continue;   // no SL = unbounded risk, skip calc
+      string sym = posInfo.Symbol();
+      double vol = posInfo.Volume();
+      double tickVal = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+      double tickSz  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+      if (tickSz <= 0) continue;
+      double slDistTicks = MathAbs(open - sl) / tickSz;
+      double riskMoney = slDistTicks * tickVal * vol;
+      totalRisk += riskMoney;
+   }
+   return totalRisk / equity * 100.0;
+}
+
 void ManagePositions() {
-   // Currently relies on broker SL/TP. Future: trailing stop, breakeven move.
+   if (!UseBreakeven && !UseTrailing) return;
+
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      if (!posInfo.SelectByIndex(i)) continue;
+      if (posInfo.Magic() != MagicNumber) continue;
+
+      string sym  = posInfo.Symbol();
+      long   type = posInfo.PositionType();
+      double open = posInfo.PriceOpen();
+      double curSL= posInfo.StopLoss();
+      double curTP= posInfo.TakeProfit();
+      double bid  = SymbolInfoDouble(sym, SYMBOL_BID);
+      double ask  = SymbolInfoDouble(sym, SYMBOL_ASK);
+      int    digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+
+      // Original R = distance from entry to original SL
+      // We infer R from current SL distance (best effort)
+      double price = (type == POSITION_TYPE_BUY) ? bid : ask;
+      double rDist = MathAbs(open - curSL);
+      if (rDist <= 0) continue;
+
+      // Profit in R-multiples
+      double profitR = (type == POSITION_TYPE_BUY)
+                       ? (price - open) / rDist
+                       : (open - price) / rDist;
+
+      double newSL = curSL;
+
+      // ── Breakeven move ──
+      if (UseBreakeven && profitR >= BreakevenAtR) {
+         double bePrice = (type == POSITION_TYPE_BUY)
+                          ? open + rDist * BreakevenLockR
+                          : open - rDist * BreakevenLockR;
+         bePrice = NormalizeDouble(bePrice, digits);
+         // only move SL forward (never backward)
+         if ((type == POSITION_TYPE_BUY  && bePrice > curSL) ||
+             (type == POSITION_TYPE_SELL && bePrice < curSL)) {
+            newSL = bePrice;
+         }
+      }
+
+      // ── Trailing stop (after breakeven) ──
+      if (UseTrailing && profitR >= TrailStartR) {
+         // Trail SL to lock (profitR - TrailStepR) of distance
+         double lockR = profitR - TrailStepR;
+         double trailPrice = (type == POSITION_TYPE_BUY)
+                             ? open + rDist * lockR
+                             : open - rDist * lockR;
+         trailPrice = NormalizeDouble(trailPrice, digits);
+         if ((type == POSITION_TYPE_BUY  && trailPrice > newSL) ||
+             (type == POSITION_TYPE_SELL && trailPrice < newSL)) {
+            newSL = trailPrice;
+         }
+      }
+
+      // Apply if changed
+      if (MathAbs(newSL - curSL) > SymbolInfoDouble(sym, SYMBOL_POINT)) {
+         if (trade.PositionModify(posInfo.Ticket(), newSL, curTP)) {
+            PrintFormat("🛡 %s SL moved → %.5f (profit %.2fR)", sym, newSL, profitR);
+         }
+      }
+   }
 }
 
 //═══════════════════ SESSION FILTER ═════════════════════════════════
@@ -621,11 +727,15 @@ void UpdateDashboard() {
    DashLabel("SYS_LINE1", DASH_X+16, y+22,
              StringFormat("%s    %s", trade_status, webStatus),
              tradeClr, 8);
+   double portRiskNow = PortfolioRiskPct();
+   color portClr = portRiskNow >= MaxPortfolioRiskPct ? C'255,80,80'
+                 : portRiskNow >= MaxPortfolioRiskPct*0.7 ? C'255,200,0'
+                 : C'160,160,160';
    DashLabel("SYS_LINE2", DASH_X+16, y+38,
-             StringFormat("%s  Risk %.1f%%  R:R 1:%.1f  %s  Magic %d",
+             StringFormat("%s  Risk %.1f%%  Port %.1f%%/%.0f%%  R:R 1:%.1f",
                           ScalpMode ? "⚡SCALP" : "🌊SWING",
-                          RiskPercent, effRR, EnumToString(effTF), MagicNumber),
-             C'160,160,160', 7);
+                          RiskPercent, portRiskNow, MaxPortfolioRiskPct, effRR),
+             portClr, 7);
 
    // ── Footer signal hunt bar ──
    y += 62;
@@ -701,6 +811,7 @@ void PushToWeb() {
       "\"tradeSymbols\":[\"%s\",\"%s\"],"
       "\"watchSymbols\":[\"%s\"],"
       "\"symEnabled\":%s,"
+      "\"portfolioRisk\":%.2f,\"maxPortfolioRisk\":%.1f,"
       "\"mode\":\"%s\","
       "\"paused\":%s,"
       "\"prices\":%s,"
@@ -714,6 +825,7 @@ void PushToWeb() {
       Symbol1, Symbol2,
       WatchXAU,
       enabledJson,
+      PortfolioRiskPct(), MaxPortfolioRiskPct,
       (ScalpMode ? "scalp" : "swing"),
       (eaPaused ? "true" : "false"),
       pxJson,
@@ -908,6 +1020,10 @@ void ExecuteAISignal(string sym, bool isBuy) {
    }
    if (CountPositions(sym) >= effMaxPos) {
       PrintFormat("🚫 AI signal for %s — max positions reached, skipped", sym);
+      return;
+   }
+   if (PortfolioRiskPct() >= MaxPortfolioRiskPct) {
+      PrintFormat("🚫 AI signal for %s — portfolio risk too high, skipped", sym);
       return;
    }
 

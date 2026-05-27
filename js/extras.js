@@ -1870,6 +1870,9 @@ const BotBridge = {
           <div style="font-size:11px;color:var(--gold);margin-top:3px">${s.todayWins}/${s.todayLosses}</div>
         </div>
       </div>
+      <!-- Phase 15: Portfolio risk gauge -->
+      ${this.renderPortfolioRisk(s)}
+
       <!-- Phase 12.9: per-symbol enable/disable toggles -->
       ${this.renderSymbolToggles(s)}
 
@@ -1890,6 +1893,26 @@ const BotBridge = {
       <!-- Phase 12.6: Live AI Training Status -->
       ${this.renderLiveTraining()}
     `;
+  },
+
+  // Phase 15: Portfolio risk gauge (stop-out guard)
+  renderPortfolioRisk(s) {
+    if (s.portfolioRisk === undefined) return '';
+    const risk = parseFloat(s.portfolioRisk) || 0;
+    const max  = parseFloat(s.maxPortfolioRisk) || 6;
+    const pct  = Math.min(100, (risk / max) * 100);
+    const col  = risk >= max ? 'var(--red)' : risk >= max * 0.7 ? 'var(--orange)' : 'var(--green)';
+    const status = risk >= max ? '🔴 MAX — บล็อก trade ใหม่' : risk >= max * 0.7 ? '🟡 สูง' : '🟢 ปลอดภัย';
+    return `
+      <div style="margin-top:8px;padding:6px;border:1px solid ${col};background:rgba(255,255,255,0.02)">
+        <div style="display:flex;justify-content:space-between;font-size:6px;margin-bottom:3px">
+          <span style="color:var(--gold)">🛡 PORTFOLIO RISK (stop-out guard)</span>
+          <span style="color:${col}">${risk.toFixed(1)}% / ${max.toFixed(0)}% · ${status}</span>
+        </div>
+        <div style="height:6px;background:var(--bg-card);border:1px solid var(--border);position:relative">
+          <div style="height:100%;width:${pct}%;background:${col};transition:width 0.3s"></div>
+        </div>
+      </div>`;
   },
 
   // Phase 12.9: per-symbol enable/disable buttons
