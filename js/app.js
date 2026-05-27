@@ -204,6 +204,12 @@ const TradingWarRoom = {
     UI.renderCurrencyTeam(fxR);
     UI.renderCommander(cmdR);
 
+    // Phase 21: Trader roster on main dashboard (2 traders/pair w/ skills)
+    if (typeof Company !== 'undefined' && Company.renderTraders) {
+      const rb = document.getElementById('trader-roster-body');
+      if (rb) rb.innerHTML = Company.renderTraders();
+    }
+
     // Render big banner + grade badge
     SignalGrade.renderBanner(cmdR, gradeInfo);
 

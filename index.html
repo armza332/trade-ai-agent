@@ -6,7 +6,7 @@
   <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="pragma" content="no-cache">
   <meta http-equiv="expires" content="0">
-  <title>TRADING WAR ROOM — AI Agent System v21.1</title>
+  <title>TRADING WAR ROOM — AI Agent System v21.2</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -102,6 +102,21 @@
 
 <!-- ═══════════════════ MAIN GRID ═══════════════════ -->
 <div id="main">
+
+  <!-- ═══════ TRADER ROSTER (Phase 21: 2 traders/pair, distinct skills) ═══════ -->
+  <div class="team-panel" id="roster-panel" style="grid-column:1/-1">
+    <div class="team-header" style="background:linear-gradient(90deg,rgba(255,215,0,0.12),transparent)">
+      <div>
+        <div class="team-name">👔 TRADER ROSTER — 6 พนักงาน (2 ต่อคู่ · คนละเทคนิค)</div>
+        <div style="font-size:6px;color:var(--gray);margin-top:2px">แต่ละคนมีสกิล/สถิติของตัวเอง · ระบบเลือกคนที่ edge ดีสุดเป็นคนกดออเดอร์ 🎯</div>
+      </div>
+    </div>
+    <div id="trader-roster-body" style="padding:10px">
+      <div style="padding:20px;text-align:center;font-size:7px;color:var(--gray)">
+        <div class="pixel-loader"></div> Loading traders...
+      </div>
+    </div>
+  </div>
 
   <!-- ═══════ GOLD TEAM ═══════ -->
   <div class="team-panel" id="gold-panel">
@@ -556,13 +571,13 @@
 </div>
 
 <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-<script src="js/i18n.js?v=21.1"></script>
-<script src="js/market.js?v=21.1"></script>
-<script src="js/agents.js?v=21.1"></script>
-<script src="js/ui.js?v=21.1"></script>
-<script src="js/extras.js?v=21.1"></script>
-<script src="js/backtest.js?v=21.1"></script>
-<script src="js/app.js?v=21.1"></script>
+<script src="js/i18n.js?v=21.2"></script>
+<script src="js/market.js?v=21.2"></script>
+<script src="js/agents.js?v=21.2"></script>
+<script src="js/ui.js?v=21.2"></script>
+<script src="js/extras.js?v=21.2"></script>
+<script src="js/backtest.js?v=21.2"></script>
+<script src="js/app.js?v=21.2"></script>
 
 </body>
 </html>
