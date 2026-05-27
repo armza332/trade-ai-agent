@@ -3028,6 +3028,37 @@ const Portfolios = {
   },
   save(arr) { if (typeof Settings !== 'undefined') Settings.set('portfolios', arr); },
   active() { const a = this.load(); return a.find(p => p.active) || a[0]; },
+
+  // Phase 21: poll EVERY portfolio's bridge so all show live (not just active)
+  _live: {},      // id -> { balance, equity, online, ageSec, pnl, pos }
+  _timer: null,
+  async pollAll() {
+    const a = this.load();
+    await Promise.all(a.map(async p => {
+      if (!p.bridgeURL || p.bridgeURL.length < 20) return;
+      try {
+        const r = await fetch(p.bridgeURL + '?action=status&t=' + Date.now());
+        const d = await r.json();
+        if (d.ok && d.status) {
+          this._live[p.id] = {
+            balance: d.status.balance, equity: d.status.equity,
+            online: d.status.online, ageSec: d.status.ageSec,
+            pnl: d.status.todayPnL, pos: (d.status.positions || []).length,
+          };
+        }
+      } catch (e) { /* silent — offline portfolio */ }
+    }));
+    // refresh panel if Company modal is open
+    if (typeof Company !== 'undefined' && document.getElementById('company-office')) {
+      const el = document.getElementById('company-office');
+      if (el) el.innerHTML = Company.renderOffice();
+    }
+  },
+  startPolling() {
+    if (this._timer) return;
+    this.pollAll();
+    this._timer = setInterval(() => this.pollAll(), 30000);
+  },
   setActive(id) {
     const a = this.load();
     a.forEach(p => p.active = (p.id === id));
@@ -3063,19 +3094,24 @@ const Portfolios = {
   },
   render() {
     const a = this.load();
-    const liveBal = BotBridge?.lastStatus?.balance;
+    if (typeof this.startPolling === 'function') this.startPolling();
     const chips = a.map(p => {
-      const bal = p.active && typeof liveBal === 'number' ? liveBal : p.start;
+      const lv = this._live[p.id];
+      const hasLive = lv && typeof lv.balance === 'number';
+      const bal = hasLive ? lv.balance : p.start;
+      const online = hasLive ? lv.online : false;
       const pct = Math.max(0, Math.min(100, ((bal - p.start) / Math.max(1, p.target - p.start)) * 100));
       const onTrack = bal >= p.start;
-      return `<div style="flex:1;min-width:120px;padding:7px 9px;border:1px solid ${p.active?'var(--teal)':'var(--border)'};border-radius:6px;background:${p.active?'rgba(0,255,200,0.07)':'rgba(255,255,255,0.02)'};position:relative">
+      const dot = !p.bridgeURL ? '⚪' : online ? '🟢' : '🔴';
+      const pnlTxt = hasLive ? ` · วันนี้ ${lv.pnl>=0?'+':''}$${(lv.pnl||0).toFixed(2)} · ${lv.pos||0} ไม้` : (p.bridgeURL ? ' · offline' : ' · ยังไม่ใส่ URL');
+      return `<div style="flex:1;min-width:140px;padding:7px 9px;border:1px solid ${p.active?'var(--teal)':'var(--border)'};border-radius:6px;background:${p.active?'rgba(0,255,200,0.07)':'rgba(255,255,255,0.02)'};position:relative">
         <div style="display:flex;align-items:center;gap:4px">
-          <span style="font-size:9px;color:${p.active?'var(--teal)':'#9aa'};font-weight:bold">${p.active?'🟢':'⚪'} ${p.name}</span>
+          <span style="font-size:9px;color:${p.active?'var(--teal)':'#9aa'};font-weight:bold">${dot} ${p.name}</span>
           ${a.length>1?`<span onclick="event.stopPropagation();Portfolios.remove('${p.id}')" title="ลบ" style="margin-left:auto;cursor:pointer;color:var(--red);font-size:9px">✕</span>`:''}
         </div>
-        <div style="font-size:7px;color:#9aa;margin:2px 0">$${(typeof bal==='number'?bal:p.start).toFixed(2)} / 🎯 $${p.target}</div>
+        <div style="font-size:7px;color:#9aa;margin:2px 0">$${bal.toFixed(2)} / 🎯 $${p.target}${pnlTxt}</div>
         <div style="height:5px;background:#1a2030;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${onTrack?'linear-gradient(90deg,var(--green),var(--gold))':'var(--red)'}"></div></div>
-        ${!p.active?`<button onclick="Portfolios.setActive('${p.id}')" class="btn btn-secondary" style="font-size:7px;padding:2px 6px;margin-top:4px;width:100%">เลือกพอร์ตนี้</button>`:'<div style="font-size:6px;color:var(--teal);margin-top:4px;text-align:center">● กำลังดูแล (active)</div>'}
+        ${!p.active?`<button onclick="Portfolios.setActive('${p.id}')" class="btn btn-secondary" style="font-size:7px;padding:2px 6px;margin-top:4px;width:100%">เลือกควบคุมพอร์ตนี้</button>`:'<div style="font-size:6px;color:var(--teal);margin-top:4px;text-align:center">● ควบคุมอยู่ (ส่งคำสั่งได้)</div>'}
       </div>`;
     }).join('');
     return `<div style="margin-bottom:12px">
@@ -3083,7 +3119,7 @@ const Portfolios = {
         ${a.length < this.MAX ? `<button onclick="Portfolios.add()" class="btn btn-secondary" style="font-size:7px;padding:2px 8px;margin-left:6px">+ เพิ่มพอร์ต</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${chips}</div>
-      <div style="font-size:6px;color:#778;margin-top:4px">หมายเหตุ: แต่ละพอร์ต = บัญชี MT5 + Bridge URL ของตัวเอง · ระบบ poll พอร์ต active ทีละพอร์ต · lot คำนวณตามเงินต้นของพอร์ตนั้น</div>
+      <div style="font-size:6px;color:#778;margin-top:4px">หมายเหตุ: แต่ละพอร์ต = บัญชี MT5 + Bridge URL ของตัวเอง · ระบบดึงสถานะ <b>ทุกพอร์ตพร้อมกัน</b> ทุก 30 วิ (🟢=online) · พอร์ตที่ "ควบคุมอยู่" คือพอร์ตที่รับคำสั่ง/สัญญาณ AI</div>
     </div>`;
   },
 };
