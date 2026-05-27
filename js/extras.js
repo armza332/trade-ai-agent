@@ -3080,10 +3080,12 @@ const Company = {
     const on = combo.agents.map(k => this._SETKEY[k] || k);
     ALL.forEach(n => Settings.set('enable' + n, on.includes(n)));
     AutoOptimize._restoreEnables = snap;   // backtest.js restores this on stop
+    if (AutoOptimize.running) AutoOptimize.stop();   // stop any prior run first
     if (typeof Modal !== 'undefined') Modal.open('backtest');
-    setTimeout(() => AutoOptimize.start({ maxCycles: 999, symbols: ['XAUUSD','AUDUSD','EURUSD'] }), 400);
     if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', e.name, `🎓 ${e.name} เทรนคอมโบ ${combo.name} (เฉพาะ ${kitTxt})`);
-    alert(`🎓 ${e.name} เริ่มเทรนคอมโบ ${combo.name}\nเปิดเฉพาะ: ${kitTxt}\n\nกด STOP ที่หน้า Backtest เมื่อพอ — ระบบคืนค่า agent เดิมให้เอง`);
+    alert(`🎓 ${e.name} กำลังเริ่มเทรนคอมโบ ${combo.name}\nเปิดเฉพาะ: ${kitTxt}\n\n→ Auto-Optimize จะเริ่มรันทันที (ดูแถบ "RUNNING — Cycle…")\nกด ⏹ STOP เมื่อพอ — ระบบคืนค่า agent เดิมให้เอง`);
+    // start AFTER the alert is dismissed (modal already open) — reliable, no race
+    setTimeout(() => { if (!AutoOptimize.running) AutoOptimize.start({ maxCycles: 999, symbols: ['XAUUSD','AUDUSD','EURUSD'] }); }, 200);
   },
 
   // PHASE 24.3: Audit Log + Leaderboard (CEO checks who's actually good)
