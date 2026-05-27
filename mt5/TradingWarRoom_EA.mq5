@@ -216,8 +216,12 @@ void OnDeinit(const int reason) {
 
 //═══════════════════ ON TICK ════════════════════════════════════════
 void OnTick() {
-   // Update dashboard + web push (every tick is OK, they have internal throttle)
-   if (ShowDashboard) UpdateDashboard();
+   // Phase 18.1: throttle dashboard to 1/sec (was every tick → caused MT5 lag)
+   static datetime lastDash = 0;
+   if (ShowDashboard && TimeCurrent() != lastDash) {
+      UpdateDashboard();
+      lastDash = TimeCurrent();
+   }
    PushToWeb();
    PollWebCommands();    // Phase 12.4: check for remote commands
 
@@ -360,6 +364,18 @@ void ExecuteTrade(string sym, int idx, bool isBuy, double atr, double rsi) {
    sl = NormalizeDouble(sl, digits);
    tp = NormalizeDouble(tp, digits);
    entry = NormalizeDouble(entry, digits);
+
+   // Phase 18.1: Cross-instance lock — prevent 2+ EA instances (same magic)
+   // from opening the SAME symbol within 10s (fixes double-trade)
+   string lockName = "TWR_LOCK_" + sym + "_" + IntegerToString(MagicNumber);
+   if (GlobalVariableCheck(lockName)) {
+      double lastLock = GlobalVariableGet(lockName);
+      if (TimeCurrent() - (datetime)lastLock < 10) {
+         PrintFormat("🔒 %s locked by another EA instance (<10s) — skip duplicate", sym);
+         return;
+      }
+   }
+   GlobalVariableSet(lockName, (double)TimeCurrent());
 
    // Calculate lot size from risk
    double lot = CalculateLot(sym, slDist);
