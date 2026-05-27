@@ -2606,18 +2606,19 @@ const Company = {
   // Live signal from only this trader's kit
   _traderSignal(teamData, kit) {
     const agents = teamData?.agents || {};
-    let buy = 0, sell = 0, n = 0, confSum = 0;
+    let buy = 0, sell = 0, n = 0, buyConf = 0, sellConf = 0;
     kit.forEach(key => {
       const a = agents[key];
       if (!a) return;
       n++;
-      if (a.signal === 'buy')  { buy++;  confSum += a.conf || 50; }
-      else if (a.signal === 'sell') { sell++; confSum += a.conf || 50; }
+      if (a.signal === 'buy')  { buy++;  buyConf  += a.conf || 50; }
+      else if (a.signal === 'sell') { sell++; sellConf += a.conf || 50; }
     });
     let signal = 'wait', conf = 0;
     const need = Math.max(1, Math.ceil(n / 2));
-    if (n > 0 && buy > sell && buy >= need)      { signal = 'buy';  conf = Math.round(confSum / buy); }
-    else if (n > 0 && sell > buy && sell >= need) { signal = 'sell'; conf = Math.round(confSum / sell); }
+    // conf = average of the WINNING side only (was mixing both sides → inflated)
+    if (n > 0 && buy > sell && buy >= need)      { signal = 'buy';  conf = Math.round(buyConf / buy); }
+    else if (n > 0 && sell > buy && sell >= need) { signal = 'sell'; conf = Math.round(sellConf / sell); }
     return { signal, conf, buy, sell, n };
   },
 
@@ -2753,30 +2754,67 @@ const Company = {
     if (typeof Company !== 'undefined') Company.refresh();
   },
 
-  // PHASE 21.6: each head trader fires its OWN pair independently when confident
-  // (replaces the single Commander pick) — gated behind traderDrivenSignals.
+  // ═══════════════════════════════════════════════════════
+  //  PHASE 22: UNIFIED NESTED BRAIN
+  //  Agents → Head-trader decides per pair (KB-best kit) →
+  //  Commander-style approval gate (grade + risk + consensus) → EA.
+  //  ONE decision path, no parallel brains.
+  // ═══════════════════════════════════════════════════════
+  _GRADE_RANK: { 'S+':4, 'A':3, 'B':2, 'C':1, 'D':0 },
+  deskDecision(sym, teamData, bot) {
+    const trader = this._buildRoster().find(t => t.sym === sym) || this._buildRoster()[0];
+    const live = this._traderSignal(teamData, trader.kit);
+    const rec  = this._traderRecord(trader);
+    const wr   = rec.total > 0 ? (rec.w / rec.total * 100) : 0;
+    const minConf = (typeof Settings !== 'undefined') ? Settings.get('traderMinConf', 80) : 80;
+    const out = { trader, live, rec, wr, signal: live.signal, conf: live.conf, grade: '-', approved: false, blockedBy: null };
+
+    if (live.signal !== 'buy' && live.signal !== 'sell') { out.blockedBy = 'ไม่มีสัญญาณ'; return out; }
+
+    // ── Grade (head-trader conviction) ──
+    const fullAgree = live.n > 0 && (live.buy === live.n || live.sell === live.n);
+    let grade = 'C';
+    if (live.conf >= 90 && wr >= 68 && fullAgree)       grade = 'S+';
+    else if (live.conf >= 85 && wr >= 60)               grade = 'A';
+    else if (live.conf >= 80 && wr >= 55)               grade = 'B';
+    out.grade = grade;
+
+    // ── Commander-style approval gates (each can block) ──
+    const need = Math.max(1, Math.ceil(live.n / 2));
+    const agree = Math.max(live.buy, live.sell);
+    const minGrade = (typeof Settings !== 'undefined') ? Settings.get('minGrade', 'A') : 'A';
+    if (agree < need)                       out.blockedBy = 'เทคนิคไม่พอเห็นตรงกัน';
+    else if (live.conf < minConf)           out.blockedBy = `conf ${live.conf}% < ${minConf}%`;
+    else if (rec.R <= 0)                    out.blockedBy = 'KB ยังไม่ทำกำไร';
+    else if (wr < 50)                       out.blockedBy = `WR ${wr.toFixed(0)}% < 50%`;
+    else if ((this._GRADE_RANK[grade]||0) < (this._GRADE_RANK[minGrade]||3))
+                                            out.blockedBy = `Grade ${grade} < ${minGrade}`;
+    else if (bot && parseFloat(bot.portfolioRisk||0) >= parseFloat(bot.maxPortfolioRisk||6))
+                                            out.blockedBy = 'ความเสี่ยงพอร์ตเต็ม';
+    out.approved = !out.blockedBy;
+    return out;
+  },
+
+  // Fire approved per-pair signals to EA (gated behind traderDrivenSignals)
   _lastTraderFire: {},
   traderSignalsTick(goldR, fxR) {
     if (typeof Settings === 'undefined') return;
     if (!Settings.get('traderDrivenSignals', false)) return;
     if (!Settings.get('webAISignalsToEA', false)) return;   // respect master switch
+    const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
     const teamFor = (sym) => sym === 'XAUUSD' ? goldR : sym === 'AUDUSD' ? fxR?.aud : fxR?.eur;
     const now = Date.now();
-    const COOLDOWN = 15 * 60 * 1000;   // 15-min per-pair cooldown
-    const minConf = Settings.get('traderMinConf', 80);
-    this._buildRoster().forEach(t => {
-      const live = this._traderSignal(teamFor(t.sym), t.kit);
-      if (live.signal !== 'buy' && live.signal !== 'sell') return;
-      if (live.conf < minConf) return;
-      const rec = this._traderRecord(t);
-      if (rec.R <= 0) return;   // only fire if this trader's KB edge is positive
-      const last = this._lastTraderFire[t.sym];
-      if (last && last.sig === live.signal && (now - last.ts) < COOLDOWN) return;
-      this._lastTraderFire[t.sym] = { sig: live.signal, ts: now };
+    const COOLDOWN = 15 * 60 * 1000;
+    ['XAUUSD','AUDUSD','EURUSD'].forEach(sym => {
+      const d = this.deskDecision(sym, teamFor(sym), bot);
+      if (!d.approved) return;
+      const last = this._lastTraderFire[sym];
+      if (last && last.sig === d.signal && (now - last.ts) < COOLDOWN) return;
+      this._lastTraderFire[sym] = { sig: d.signal, ts: now };
       if (typeof BotBridge !== 'undefined' && BotBridge.sendAISignal) {
-        BotBridge.sendAISignal(t.sym, live.signal);
+        BotBridge.sendAISignal(sym, d.signal);
         if (typeof UI !== 'undefined' && UI.addLog)
-          UI.addLog('CMD', t.name, `🎯 ${t.name} ยิง ${live.signal.toUpperCase()} ${t.sym.replace('USD','')} (conf ${live.conf}% · KB ${rec.R>0?'+':''}${rec.R.toFixed(0)}R)`);
+          UI.addLog('CMD', d.trader.name, `🎯 ${d.trader.name} ยิง ${d.signal.toUpperCase()} ${sym.replace('USD','')} · Grade ${d.grade} · conf ${d.conf}% · อนุมัติโดย Commander`);
       }
     });
   },
@@ -2787,33 +2825,27 @@ const Company = {
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bal = BotBridge?.lastStatus?.balance || Settings.get('accountSize', 30);
 
-    // group roster by symbol — now 3 head traders (1 per pair, KB-best combo)
-    const groups = {};
-    this._buildRoster().forEach(t => {
-      const team = teamFor(t.sym);
-      const entry = { ...t, rec: this._traderRecord(t), live: this._traderSignal(team, t.kit) };
-      (groups[t.sym] = groups[t.sym] || []).push(entry);
-    });
-
+    const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
     const symMeta = { XAUUSD:{n:'🥇 GOLD DESK',c:'var(--gold)'}, AUDUSD:{n:'🇦🇺 AUD DESK',c:'#00ccff'}, EURUSD:{n:'🇪🇺 EUR DESK',c:'#4169e1'} };
     let html = this._presetBar();
-    Object.keys(groups).forEach(sym => {
-      const traders = groups[sym];
-      const presserId = this._pickPresser(traders);
-      const m = symMeta[sym] || { n:sym, c:'var(--teal)' };
+    this._buildRoster().forEach(t => {
+      const d = this.deskDecision(t.sym, teamFor(t.sym), bot);
+      const m = symMeta[t.sym] || { n:t.sym, c:'var(--teal)' };
+      const statusTxt = d.approved
+        ? `<span style="float:right;font-size:7px;color:var(--green)">✅ Grade ${d.grade} · อนุมัติ → ยิง</span>`
+        : (d.signal==='buy'||d.signal==='sell')
+          ? `<span style="float:right;font-size:7px;color:var(--orange)">⛔ ${d.blockedBy}</span>`
+          : `<span style="float:right;font-size:7px;color:var(--gray)">— เฝ้าตลาด —</span>`;
       html += `<div style="margin-bottom:10px">
-        <div style="font-size:9px;color:${m.c};font-weight:bold;margin-bottom:4px">${m.n}
-          ${presserId ? `<span style="float:right;font-size:7px;color:var(--green)">🎯 ${traders.find(t=>t.id===presserId).name} กดออเดอร์</span>` : '<span style="float:right;font-size:7px;color:var(--gray)">— ไม่มีใครเข้า —</span>'}
-        </div>
-        <div style="display:flex;gap:8px">
-          ${traders.map(t => this._traderSkillCard(t, t.id === presserId, bal)).join('')}
-        </div>
+        <div style="font-size:9px;color:${m.c};font-weight:bold;margin-bottom:4px">${m.n}${statusTxt}</div>
+        <div style="display:flex;gap:8px">${this._traderSkillCard({ ...t, rec:d.rec, live:d.live }, d, bal)}</div>
       </div>`;
     });
     return html;
   },
 
-  _traderSkillCard(t, isPresser, bal) {
+  _traderSkillCard(t, d, bal) {
+    const isPresser = d.approved;
     const sig = t.live.signal;
     const sigCol = sig === 'buy' ? 'var(--green)' : sig === 'sell' ? 'var(--red)' : 'var(--gray)';
     const sigTxt = sig === 'buy' ? '▲ BUY' : sig === 'sell' ? '▼ SELL' : '⏸ WAIT';
@@ -2831,10 +2863,13 @@ const Company = {
         <span style="font-size:6px;color:${bc};width:20px;text-align:right;flex:none">${s.t>0?s.acc+'%':'—'}</span>
       </div>`;
     }).join('');
-    // risk-aware lot note (presser only)
+    // Commander approval line (nested-brain status)
+    const gradeCol = d.grade==='S+'?'var(--gold)':d.grade==='A'?'var(--green)':d.grade==='B'?'var(--teal)':'#9aa';
     const riskNote = isPresser
-      ? `<div style="font-size:6px;color:var(--green);margin-top:4px;border-top:1px dashed var(--green);padding-top:3px">💼 พอร์ต $${bal.toFixed(0)} · เสี่ยง ≤2% · ${t.speed}</div>`
-      : '';
+      ? `<div style="font-size:6px;color:var(--green);margin-top:4px;border-top:1px dashed var(--green);padding-top:3px">✅ <b>Grade ${d.grade}</b> · Commander อนุมัติ → ยิง · พอร์ต $${bal.toFixed(0)} · ${t.speed}</div>`
+      : (d.signal==='buy'||d.signal==='sell')
+        ? `<div style="font-size:6px;color:var(--orange);margin-top:4px;border-top:1px dashed #443;padding-top:3px">🔸 Grade <b style="color:${gradeCol}">${d.grade}</b> · Commander ยังไม่อนุมัติ: ${d.blockedBy}</div>`
+        : '';
     return `
       <div style="flex:1;min-width:0;padding:8px;border:1px solid ${isPresser?sigCol:'var(--border)'};border-radius:5px;background:${isPresser?sigCol+'14':'rgba(255,255,255,0.02)'};${isPresser?`box-shadow:0 0 8px ${sigCol}55`:''}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
