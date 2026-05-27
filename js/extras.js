@@ -1805,6 +1805,10 @@ const BotBridge = {
   learnFromTrade(t) {
     if (typeof AgentScores === 'undefined') return;
     if (!t.outcome || t.outcome === 'breakeven') return;
+    // Phase 24: attribute this closed trade to the employee who fired its signal (audit)
+    if (typeof Company !== 'undefined' && Company._attachOutcome) {
+      try { Company._attachOutcome(t.sym, t.outcome, t.rMult); } catch (e) {}
+    }
     // EA used RSI + BB + Fib confluence — all agreed on direction
     const sigDir = (t.side === 'buy') ? 'buy' : 'sell';
     const votes = [
@@ -2835,6 +2839,183 @@ const Company = {
     return out;
   },
 
+  // ═══════════════════════════════════════════════════════
+  //  PHASE 24: EMPLOYEE BOARD — many combo-specialists + AUDIT
+  //  6 employees, each owns ONE combo. They COMPETE per pair; the best
+  //  approved one fires. Every signal is logged & audited so the CEO can
+  //  see who's actually good.
+  // ═══════════════════════════════════════════════════════
+  EMPLOYEES: [
+    { id:'emp_mr', combo:'mean_rev',    name:'Mina',   face:{skin:'#f0c8a0',hair:'#caa24a',style:'long', acc:'glasses', accColor:'#ffd700'} },
+    { id:'emp_tr', combo:'trend',       name:'Trent',  face:{skin:'#e9b48c',hair:'#3a2a1a',style:'short',acc:'headset', accColor:'#7fff00'} },
+    { id:'emp_sm', combo:'smart_money', name:'Sienna', face:{skin:'#e9b48c',hair:'#101015',style:'bun',  acc:'headband',accColor:'#cd853f'} },
+    { id:'emp_bo', combo:'breakout',    name:'Blaze',  face:{skin:'#e9b48c',hair:'#3a2a1a',style:'spiky',acc:'visor',   accColor:'#ff4500'} },
+    { id:'emp_rv', combo:'reversal_sr', name:'Ravi',   face:{skin:'#cd9b6a',hair:'#2a2a3a',style:'short',acc:'glasses', accColor:'#9370db'} },
+    { id:'emp_wv', combo:'wave',        name:'Willa',  face:{skin:'#e3c9a0',hair:'#bfe0ff',style:'long', acc:'none',    accColor:'#00e5ff'} },
+  ],
+
+  // KB record for an arbitrary combo (agents) on a symbol
+  _comboRecord(sym, agents) {
+    const out = { w:0, l:0, R:0, total:0 };
+    if (typeof AgentScores === 'undefined') return out;
+    const kb = AgentScores.load();
+    const prefix = sym === 'XAUUSD' ? 'Gold' : sym === 'AUDUSD' ? 'AUD' : 'EUR';
+    agents.forEach(key => {
+      const short = this._KEYMAP[key] || key;
+      const rec = kb.agents[prefix + '-' + short] || kb.agents[prefix + '-' + short.toLowerCase()];
+      const b = rec && (rec['sym_' + sym] || rec.all);
+      if (b && b.t > 0) { out.w += b.w; out.l += b.l; out.R += b.R; out.total += b.t; }
+    });
+    return out;
+  },
+
+  // One employee's decision on a pair (their combo + same gates as deskDecision)
+  _empDecision(emp, sym, teamData, bot) {
+    const combo = this.COMBOS[emp.combo];
+    const live = this._traderSignal(teamData, combo.agents);
+    const rec  = this._comboRecord(sym, combo.agents);
+    const wr   = rec.total > 0 ? (rec.w / rec.total * 100) : 0;
+    const minConf = (typeof Settings !== 'undefined') ? Settings.get('traderMinConf', 80) : 80;
+    const out = { emp, combo, sym, live, rec, wr, signal: live.signal, conf: live.conf, grade: '-', approved: false, blockedBy: null };
+    if (live.signal !== 'buy' && live.signal !== 'sell') { out.blockedBy = 'ไม่มีสัญญาณ'; return out; }
+    const fullAgree = live.n > 0 && (live.buy === live.n || live.sell === live.n);
+    let grade = 'C';
+    if (live.conf >= 90 && wr >= 68 && fullAgree)       grade = 'S+';
+    else if (live.conf >= 85 && wr >= 60)               grade = 'A';
+    else if (live.conf >= 80 && wr >= 55)               grade = 'B';
+    out.grade = grade;
+    const need = Math.max(1, Math.ceil(live.n / 2));
+    const agree = Math.max(live.buy, live.sell);
+    const minGrade = (typeof Settings !== 'undefined') ? Settings.get('minGrade', 'A') : 'A';
+    if (agree < need)            out.blockedBy = 'เทคนิคไม่พอเห็นตรงกัน';
+    else if (live.conf < minConf) out.blockedBy = `conf ${live.conf}% < ${minConf}%`;
+    else if (rec.R <= 0)         out.blockedBy = 'KB ยังไม่ทำกำไร';
+    else if (wr < 50)            out.blockedBy = `WR ${wr.toFixed(0)}% < 50%`;
+    else if ((this._GRADE_RANK[grade]||0) < (this._GRADE_RANK[minGrade]||3)) out.blockedBy = `Grade ${grade} < ${minGrade}`;
+    else if (bot && parseFloat(bot.portfolioRisk||0) >= parseFloat(bot.maxPortfolioRisk||6)) out.blockedBy = 'ความเสี่ยงพอร์ตเต็ม';
+    out.approved = !out.blockedBy;
+    out.score = (out.signal === 'wait' ? -1 : 1) * (live.conf + rec.R / Math.max(1, rec.total) * 100);
+    return out;
+  },
+
+  // Find the winning employee per pair (best approved decision)
+  _pairWinners(teamFor, bot) {
+    const winners = {};
+    ['XAUUSD','AUDUSD','EURUSD'].forEach(sym => {
+      let best = null;
+      this.EMPLOYEES.forEach(e => {
+        const d = this._empDecision(e, sym, teamFor(sym), bot);
+        if (d.approved && (!best || d.score > best.score)) best = d;
+      });
+      winners[sym] = best;
+    });
+    return winners;
+  },
+
+  // ── AUDIT LOG (per-employee signal history + outcomes) ──
+  _AUDIT_KEY: 'twr_audit',
+  _loadAudit() { try { return JSON.parse(localStorage.getItem(this._AUDIT_KEY) || '[]'); } catch { return []; } },
+  _saveAudit(a) { try { localStorage.setItem(this._AUDIT_KEY, JSON.stringify(a.slice(-500))); } catch {} },
+  _logSignal(empId, sym, signal, grade, conf) {
+    const a = this._loadAudit();
+    a.push({ ts: Date.now(), empId, sym, signal, grade, conf, outcome: null, rMult: null });
+    this._saveAudit(a);
+  },
+  // Attach a closed-trade outcome to the most recent unmatched signal for that symbol
+  _attachOutcome(sym, outcome, rMult) {
+    const base = (sym || '').replace(/[mzcr.]+$/i, '').replace('USD', '');
+    const a = this._loadAudit();
+    for (let i = a.length - 1; i >= 0; i--) {
+      const e = a[i];
+      if (e.outcome) continue;
+      const eb = (e.sym || '').replace(/[mzcr.]+$/i, '').replace('USD', '');
+      if (eb === base && (Date.now() - e.ts) < 4 * 3600 * 1000) {
+        e.outcome = outcome; e.rMult = rMult; this._saveAudit(a); return e.empId;
+      }
+    }
+    return null;
+  },
+  _employeeStats(empId) {
+    const a = this._loadAudit().filter(e => e.empId === empId);
+    const matched = a.filter(e => e.outcome);
+    const w = matched.filter(e => e.outcome === 'win').length;
+    const l = matched.filter(e => e.outcome === 'loss').length;
+    const R = matched.reduce((s, e) => s + (parseFloat(e.rMult) || 0), 0);
+    const wr = (w + l) ? Math.round(w / (w + l) * 100) : 0;
+    return { signals: a.length, matched: matched.length, w, l, wr, R };
+  },
+
+  // Train one employee = focused Auto-Optimize on their combo's best symbol
+  trainEmployee(empId) {
+    const e = this.EMPLOYEES.find(x => x.id === empId); if (!e) return;
+    const combo = this.COMBOS[e.combo];
+    if (typeof AutoOptimize === 'undefined') { alert('ระบบ Train ยังไม่พร้อม'); return; }
+    if (!confirm(`🎓 เทรน ${e.name} (คอมโบ ${combo.name})?\n\nจะรัน Auto-Optimize เก็บข้อมูลให้คอมโบนี้แกร่งขึ้น\n(กด STOP ที่ Backtest เมื่อพอ)`)) return;
+    if (typeof Modal !== 'undefined') Modal.open('backtest');
+    setTimeout(() => AutoOptimize.start({ maxCycles: 999 }), 400);
+    if (typeof UI !== 'undefined' && UI.addLog) UI.addLog('CMD', e.name, `🎓 ${e.name} กำลังเทรนคอมโบ ${combo.name}`);
+  },
+
+  renderEmployeeBoard() {
+    const gold = TradingWarRoom?.lastGold, fx = TradingWarRoom?.lastFX;
+    const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
+    const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
+    const winners = this._pairWinners(teamFor, bot);
+    const symEm = { XAUUSD:'🥇', AUDUSD:'🇦🇺', EURUSD:'🇪🇺' };
+
+    // winner banner
+    const wBanner = ['XAUUSD','AUDUSD','EURUSD'].map(s => {
+      const w = winners[s];
+      return `<span style="font-size:7px;margin-right:12px">${symEm[s]} ${s.replace('USD','')}: ${w ? `<b style="color:var(--green)">${w.emp.name}</b> ${w.signal==='buy'?'▲':'▼'} G${w.grade}` : '<span style="color:#778">— รอ —</span>'}</span>`;
+    }).join('');
+
+    // employee cards — each shows best current signal + audit
+    const winnerOf = (empId) => Object.keys(winners).find(s => winners[s] && winners[s].emp.id === empId);
+    const cards = this.EMPLOYEES.map(e => {
+      const combo = this.COMBOS[e.combo];
+      // best decision across pairs (for display)
+      let best = null;
+      ['XAUUSD','AUDUSD','EURUSD'].forEach(s => { const d = this._empDecision(e, s, teamFor(s), bot); if (!best || d.score > best.score) best = d; });
+      const st = this._employeeStats(e.id);
+      const activePair = winnerOf(e.id);
+      const sig = best ? best.signal : 'wait';
+      const sigCol = sig === 'buy' ? 'var(--green)' : sig === 'sell' ? 'var(--red)' : '#778';
+      const sigTxt = sig === 'buy' ? '▲ BUY' : sig === 'sell' ? '▼ SELL' : '⏸ WAIT';
+      const head = (typeof UI !== 'undefined' && UI.pixelFace) ? UI.pixelFace(e.face, 34)
+        : `<div style="width:34px;height:34px;background:${e.face.accColor}33;display:flex;align-items:center;justify-content:center;color:${e.face.accColor};font-weight:bold">${e.name[0]}</div>`;
+      const stCol = st.R > 0 ? 'var(--green)' : st.R < 0 ? 'var(--red)' : '#9aa';
+      const ratingStars = st.matched >= 3 ? (st.wr >= 60 ? '⭐⭐⭐' : st.wr >= 45 ? '⭐⭐' : '⭐') : '—';
+      return `<div style="flex:1;min-width:200px;padding:8px;border:1px solid ${activePair?sigCol:'var(--border)'};border-radius:6px;background:${activePair?sigCol+'14':'rgba(255,255,255,0.02)'};${activePair?`box-shadow:0 0 8px ${sigCol}55`:''}">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="background:#0b0f1a;border:1px solid ${e.face.accColor}66;border-radius:4px;padding:1px">${head}</span>
+          <div style="line-height:1.25;min-width:0">
+            <div style="font-size:10px;color:var(--gold);font-weight:bold">${e.name}${activePair?` <span style="font-size:7px;color:var(--green)">🎯 ${activePair.replace('USD','')}</span>`:''}</div>
+            <div style="font-size:6px;color:#9aa">${combo.icon} ${combo.name} · ${combo.agents.map(k=>this._KEYMAP[k]||k).join('+')}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right;flex:none">
+            <div style="font-size:10px;color:${sigCol};font-weight:bold">${sigTxt}</div>
+            <div style="font-size:6px;color:#9aa">${best?best.conf:0}% · G${best?best.grade:'-'}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;font-size:6px;border-top:1px dashed #2a3550;padding-top:4px">
+          <span style="color:#9aa">ออกซิก <b style="color:#fff">${st.signals}</b></span>
+          <span style="color:var(--green)">${st.w}W</span><span style="color:var(--red)">${st.l}L</span>
+          <span style="color:var(--teal)">WR ${st.wr}%</span>
+          <span style="color:${stCol}">${st.R>0?'+':''}${st.R.toFixed(1)}R</span>
+          <span style="margin-left:auto">${ratingStars}</span>
+        </div>
+        <button onclick="Company.trainEmployee('${e.id}')" class="btn btn-secondary" style="font-size:7px;padding:2px 6px;margin-top:5px;width:100%">🎓 เทรน ${e.name}</button>
+      </div>`;
+    }).join('');
+
+    return `<div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--gold);font-weight:bold;margin-bottom:4px">👔 EMPLOYEE BOARD — 6 พนักงาน (1 คอมโบ/คน · แข่งกันออกซิก)</div>
+      <div style="font-size:7px;padding:4px 6px;background:rgba(0,255,200,0.05);border:1px solid var(--teal);border-radius:5px;margin-bottom:6px">🎯 รอบนี้ใครได้คุม: ${wBanner}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${cards}</div>
+      <div style="font-size:6px;color:#778;margin-top:4px">⭐ = เรตติ้งจากผลจริง (ต้อง ≥3 ไม้ถึงให้ดาว) · ออกซิก = จำนวนครั้งที่ยิง · W/L/R = ผลที่จับคู่กับไม้จริงได้</div>
+    </div>`;
+  },
+
   // Fire approved per-pair signals to EA (gated behind traderDrivenSignals)
   _lastTraderFire: {},
   traderSignalsTick(goldR, fxR) {
@@ -2845,16 +3026,19 @@ const Company = {
     const teamFor = (sym) => sym === 'XAUUSD' ? goldR : sym === 'AUDUSD' ? fxR?.aud : fxR?.eur;
     const now = Date.now();
     const COOLDOWN = 15 * 60 * 1000;
+    // Phase 24: the winning EMPLOYEE (best combo) fires for each pair + audit log
+    const winners = this._pairWinners(teamFor, bot);
     ['XAUUSD','AUDUSD','EURUSD'].forEach(sym => {
-      const d = this.deskDecision(sym, teamFor(sym), bot);
-      if (!d.approved) return;
+      const d = winners[sym];
+      if (!d) return;
       const last = this._lastTraderFire[sym];
       if (last && last.sig === d.signal && (now - last.ts) < COOLDOWN) return;
       this._lastTraderFire[sym] = { sig: d.signal, ts: now };
+      this._logSignal(d.emp.id, sym, d.signal, d.grade, d.conf);   // AUDIT
       if (typeof BotBridge !== 'undefined' && BotBridge.sendAISignal) {
         BotBridge.sendAISignal(sym, d.signal);
         if (typeof UI !== 'undefined' && UI.addLog)
-          UI.addLog('CMD', d.trader.name, `🎯 ${d.trader.name} ยิง ${d.signal.toUpperCase()} ${sym.replace('USD','')} · Grade ${d.grade} · conf ${d.conf}% · อนุมัติโดย Commander`);
+          UI.addLog('CMD', d.emp.name, `🎯 ${d.emp.name} (${d.combo.name}) ยิง ${d.signal.toUpperCase()} ${sym.replace('USD','')} · Grade ${d.grade} · conf ${d.conf}%`);
       }
     });
   },
@@ -2908,22 +3092,7 @@ const Company = {
     const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
     const bal = BotBridge?.lastStatus?.balance || Settings.get('accountSize', 30);
 
-    const bot = (typeof BotBridge !== 'undefined') ? BotBridge.lastStatus : null;
-    const symMeta = { XAUUSD:{n:'🥇 GOLD DESK',c:'var(--gold)'}, AUDUSD:{n:'🇦🇺 AUD DESK',c:'#00ccff'}, EURUSD:{n:'🇪🇺 EUR DESK',c:'#4169e1'} };
-    let html = this.liveScorecard() + this._presetBar();
-    this._buildRoster().forEach(t => {
-      const d = this.deskDecision(t.sym, teamFor(t.sym), bot);
-      const m = symMeta[t.sym] || { n:t.sym, c:'var(--teal)' };
-      const statusTxt = d.approved
-        ? `<span style="float:right;font-size:7px;color:var(--green)">✅ Grade ${d.grade} · อนุมัติ → ยิง</span>`
-        : (d.signal==='buy'||d.signal==='sell')
-          ? `<span style="float:right;font-size:7px;color:var(--orange)">⛔ ${d.blockedBy}</span>`
-          : `<span style="float:right;font-size:7px;color:var(--gray)">— เฝ้าตลาด —</span>`;
-      html += `<div style="margin-bottom:10px">
-        <div style="font-size:9px;color:${m.c};font-weight:bold;margin-bottom:4px">${m.n}${statusTxt}</div>
-        <div style="display:flex;gap:8px">${this._traderSkillCard({ ...t, rec:d.rec, live:d.live }, d, bal)}</div>
-      </div>`;
-    });
+    let html = this.liveScorecard() + this._presetBar() + this.renderEmployeeBoard();
     return html;
   },
 
