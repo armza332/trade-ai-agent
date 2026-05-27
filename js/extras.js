@@ -2554,6 +2554,164 @@ const Company = {
       </div>`;
   },
 
+  // ═══════════════════════════════════════════════════════
+  //  PHASE 21: TRADER ROSTER — 2 traders/pair, distinct techniques
+  // ═══════════════════════════════════════════════════════
+  // map live-report agent key -> KB short name
+  _KEYMAP: {
+    rsi:'RSI', bollinger:'Bollinger', fib:'Fib', divergence:'Divergence',
+    elliott:'Elliott', macd:'MACD', smc:'SMC', pattern:'Pattern', news:'News',
+    ichimoku:'Ichimoku', dxy:'DXY', utbot:'UT-Bot', orderblock:'OrderBlock',
+    sweep:'Sweep', breakout:'Breakout', fvg:'FVG', mtf:'MTF',
+  },
+  roster: [
+    // XAU — gold desk
+    { id:'xau_mr', sym:'XAUUSD', name:'Goldie',  desc:'Mean-Reversion',      speed:'Swing',  kit:['rsi','bollinger','fib','divergence'],
+      face:{ skin:'#f0c8a0', hair:'#caa24a', style:'long',  acc:'glasses',  accColor:'#ffd700' } },
+    { id:'xau_sd', sym:'XAUUSD', name:'Aurum',   desc:'Supply/Demand Zone',  speed:'Scalp',  kit:['orderblock','fvg','sweep','utbot'],
+      face:{ skin:'#e9b48c', hair:'#101015', style:'bun',   acc:'headband', accColor:'#ffd700' } },
+    // AUD — aussie desk
+    { id:'aud_tr', sym:'AUDUSD', name:'Matilda', desc:'Trend Follower',      speed:'Swing',  kit:['utbot','macd','mtf','ichimoku'],
+      face:{ skin:'#e9b48c', hair:'#6b4a2a', style:'long',  acc:'visor',    accColor:'#00ccff' } },
+    { id:'aud_sd', sym:'AUDUSD', name:'Boomer',  desc:'Zone Breakout',       speed:'Scalp',  kit:['orderblock','fvg','sweep','breakout'],
+      face:{ skin:'#cd9b6a', hair:'#3a2410', style:'spiky', acc:'headband', accColor:'#00ccff' } },
+    // EUR — euro desk
+    { id:'eur_mr', sym:'EURUSD', name:'Pierre',  desc:'Wave / Reversion',    speed:'Swing',  kit:['rsi','fib','elliott','divergence'],
+      face:{ skin:'#e3c9a0', hair:'#2a2a3a', style:'short', acc:'glasses',  accColor:'#4169e1' } },
+    { id:'eur_mo', sym:'EURUSD', name:'Hans',    desc:'Momentum Breakout',   speed:'Fast',   kit:['breakout','utbot','macd','sweep'],
+      face:{ skin:'#e9b48c', hair:'#caa24a', style:'short', acc:'headset',  accColor:'#4169e1' } },
+  ],
+
+  // KB record for a trader's kit, on their symbol
+  _traderRecord(trader) {
+    const out = { w:0, l:0, R:0, total:0, skills:[] };
+    if (typeof AgentScores === 'undefined') return out;
+    const kb = AgentScores.load();
+    const prefix = trader.sym === 'XAUUSD' ? 'Gold' : trader.sym === 'AUDUSD' ? 'AUD' : 'EUR';
+    const symKey = 'sym_' + trader.sym;
+    trader.kit.forEach(key => {
+      const short = this._KEYMAP[key] || key;
+      const rec = kb.agents[prefix + '-' + short] || kb.agents[prefix + '-' + short.toLowerCase()];
+      const b = rec && (rec[symKey] || rec.all);
+      if (b && b.t > 0) {
+        out.w += b.w; out.l += b.l; out.R += b.R; out.total += b.t;
+        out.skills.push({ key, short, acc: Math.round(b.w / b.t * 100), R: b.R, t: b.t });
+      } else {
+        out.skills.push({ key, short, acc: 0, R: 0, t: 0 });
+      }
+    });
+    return out;
+  },
+
+  // Live signal from only this trader's kit
+  _traderSignal(teamData, kit) {
+    const agents = teamData?.agents || {};
+    let buy = 0, sell = 0, n = 0, confSum = 0;
+    kit.forEach(key => {
+      const a = agents[key];
+      if (!a) return;
+      n++;
+      if (a.signal === 'buy')  { buy++;  confSum += a.conf || 50; }
+      else if (a.signal === 'sell') { sell++; confSum += a.conf || 50; }
+    });
+    let signal = 'wait', conf = 0;
+    const need = Math.max(1, Math.ceil(n / 2));
+    if (n > 0 && buy > sell && buy >= need)      { signal = 'buy';  conf = Math.round(confSum / buy); }
+    else if (n > 0 && sell > buy && sell >= need) { signal = 'sell'; conf = Math.round(confSum / sell); }
+    return { signal, conf, buy, sell, n };
+  },
+
+  // Pick which trader presses the order for a pair
+  _pickPresser(traders) {
+    let best = null, bestScore = -1e9;
+    traders.forEach(t => {
+      if (t.live.signal !== 'buy' && t.live.signal !== 'sell') return;
+      // score = KB edge (R) + small live-confidence boost
+      const score = t.rec.R + t.live.conf * 0.2;
+      if (score > bestScore) { bestScore = score; best = t.id; }
+    });
+    return best;
+  },
+
+  renderTraders() {
+    const gold = TradingWarRoom?.lastGold;
+    const fx   = TradingWarRoom?.lastFX;
+    const teamFor = (sym) => sym === 'XAUUSD' ? gold : sym === 'AUDUSD' ? fx?.aud : fx?.eur;
+    const bal = BotBridge?.lastStatus?.balance || Settings.get('accountSize', 30);
+
+    // group roster by symbol
+    const groups = {};
+    this.roster.forEach(t => {
+      const team = teamFor(t.sym);
+      const entry = { ...t, rec: this._traderRecord(t), live: this._traderSignal(team, t.kit) };
+      (groups[t.sym] = groups[t.sym] || []).push(entry);
+    });
+
+    const symMeta = { XAUUSD:{n:'🥇 GOLD DESK',c:'var(--gold)'}, AUDUSD:{n:'🇦🇺 AUD DESK',c:'#00ccff'}, EURUSD:{n:'🇪🇺 EUR DESK',c:'#4169e1'} };
+    let html = '';
+    Object.keys(groups).forEach(sym => {
+      const traders = groups[sym];
+      const presserId = this._pickPresser(traders);
+      const m = symMeta[sym] || { n:sym, c:'var(--teal)' };
+      html += `<div style="margin-bottom:10px">
+        <div style="font-size:9px;color:${m.c};font-weight:bold;margin-bottom:4px">${m.n}
+          ${presserId ? `<span style="float:right;font-size:7px;color:var(--green)">🎯 ${traders.find(t=>t.id===presserId).name} กดออเดอร์</span>` : '<span style="float:right;font-size:7px;color:var(--gray)">— ไม่มีใครเข้า —</span>'}
+        </div>
+        <div style="display:flex;gap:8px">
+          ${traders.map(t => this._traderSkillCard(t, t.id === presserId, bal)).join('')}
+        </div>
+      </div>`;
+    });
+    return html;
+  },
+
+  _traderSkillCard(t, isPresser, bal) {
+    const sig = t.live.signal;
+    const sigCol = sig === 'buy' ? 'var(--green)' : sig === 'sell' ? 'var(--red)' : 'var(--gray)';
+    const sigTxt = sig === 'buy' ? '▲ BUY' : sig === 'sell' ? '▼ SELL' : '⏸ WAIT';
+    const wr = t.rec.total > 0 ? Math.round(t.rec.w / t.rec.total * 100) : 0;
+    const rCol = t.rec.R > 0 ? 'var(--green)' : t.rec.R < 0 ? 'var(--red)' : 'var(--gray)';
+    const head = (typeof UI !== 'undefined' && UI.pixelFace) ? UI.pixelFace(t.face, 36)
+      : `<div style="width:36px;height:36px;background:${t.face.accColor}33;display:flex;align-items:center;justify-content:center;color:${t.face.accColor};font-weight:bold">${t.name[0]}</div>`;
+    // skill bars
+    const bars = t.rec.skills.map(s => {
+      const bw = Math.max(4, Math.min(100, s.acc));
+      const bc = s.t === 0 ? '#444' : s.R > 0 ? 'var(--green)' : 'var(--red)';
+      return `<div style="display:flex;align-items:center;gap:4px;margin:2px 0">
+        <span style="font-size:6px;color:#9aa;width:34px;flex:none">${s.short}</span>
+        <div style="flex:1;height:5px;background:#1a2030;border-radius:3px;overflow:hidden"><div style="height:100%;width:${bw}%;background:${bc}"></div></div>
+        <span style="font-size:6px;color:${bc};width:20px;text-align:right;flex:none">${s.t>0?s.acc+'%':'—'}</span>
+      </div>`;
+    }).join('');
+    // risk-aware lot note (presser only)
+    const riskNote = isPresser
+      ? `<div style="font-size:6px;color:var(--green);margin-top:4px;border-top:1px dashed var(--green);padding-top:3px">💼 พอร์ต $${bal.toFixed(0)} · เสี่ยง ≤2% · ${t.speed}</div>`
+      : '';
+    return `
+      <div style="flex:1;min-width:0;padding:8px;border:1px solid ${isPresser?sigCol:'var(--border)'};border-radius:5px;background:${isPresser?sigCol+'14':'rgba(255,255,255,0.02)'};${isPresser?`box-shadow:0 0 8px ${sigCol}55`:''}">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+          <span style="background:#0b0f1a;border:1px solid ${t.face.accColor}66;border-radius:4px;padding:1px">${head}</span>
+          <div style="line-height:1.25;min-width:0">
+            <div style="font-size:10px;color:var(--gold);font-weight:bold">${t.name}${isPresser?' <span style="font-size:7px;color:var(--green)">🎯</span>':''}</div>
+            <div style="font-size:6px;color:#9aa">${t.desc} · ${t.speed}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right;flex:none">
+            <div style="font-size:10px;color:${sigCol};font-weight:bold">${sigTxt}</div>
+            <div style="font-size:6px;color:#9aa">${t.live.conf}%</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;font-size:6px;margin-bottom:4px">
+          <span style="color:var(--green)">${t.rec.w}W</span>
+          <span style="color:var(--red)">${t.rec.l}L</span>
+          <span style="color:var(--teal)">WR ${wr}%</span>
+          <span style="margin-left:auto;color:${rCol};font-weight:bold">${t.rec.R>0?'+':''}${t.rec.R.toFixed(0)}R</span>
+        </div>
+        <div style="font-size:6px;color:#778;margin-bottom:2px">ทักษะ (KB acc · R สี)</div>
+        ${bars}
+        ${riskNote}
+      </div>`;
+  },
+
   _secretaryBriefing() {
     const cmd = TradingWarRoom?.lastCmd;
     const bot = BotBridge?.lastStatus;
@@ -2783,11 +2941,10 @@ const Company = {
       ${autoPilot ? `<div style="padding:8px 12px;background:rgba(0,255,65,0.1);border:1px solid var(--green);margin-bottom:10px;font-size:9px;color:var(--green)">
         🤖 <b>AUTO PILOT ON</b> — ทีมตัดสินใจเอง 100% · Grade A+ → EA ทันที
       </div>` : ''}
-      <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 3 Traders</div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        ${this._traderCard('XAUUSD', gold, 'xau', 'XAU Trader')}
-        ${this._traderCard('AUDUSD', fx?.aud, 'aud', 'AUD Trader')}
-        ${this._traderCard('EURUSD', fx?.eur, 'eur', 'EUR Trader')}
+      ${typeof Portfolios !== 'undefined' ? Portfolios.render() : ''}
+      <div style="font-size:11px;color:var(--gold);margin-bottom:6px;font-weight:bold">📈 TRADE DESK — 6 Traders (2 ต่อคู่ · คนละเทคนิค)</div>
+      <div style="margin-bottom:12px">
+        ${this.renderTraders()}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div style="padding:10px;border:1px solid var(--purple);background:rgba(120,80,255,0.05);border-radius:4px">
@@ -2814,6 +2971,83 @@ const Company = {
   },
 };
 window.Company = Company;
+
+/* ═══════════════════════════════════════════════════════
+   PHASE 21: PORTFOLIO MANAGER — รับดูแลหลายพอร์ต (สูงสุด 5)
+   ═══════════════════════════════════════════════════════ */
+const Portfolios = {
+  MAX: 5,
+  load() {
+    let arr = (typeof Settings !== 'undefined') ? Settings.get('portfolios', null) : null;
+    if (!Array.isArray(arr) || arr.length === 0) {
+      arr = [{ id:'p1', name:'พอร์ตหลัก (คุณ)', client:'ตัวเอง', start:30, target:100,
+               bridgeURL: (typeof Settings!=='undefined'? Settings.get('botBridgeURL','') : ''), active:true }];
+      if (typeof Settings !== 'undefined') Settings.set('portfolios', arr);
+    }
+    return arr;
+  },
+  save(arr) { if (typeof Settings !== 'undefined') Settings.set('portfolios', arr); },
+  active() { const a = this.load(); return a.find(p => p.active) || a[0]; },
+  setActive(id) {
+    const a = this.load();
+    a.forEach(p => p.active = (p.id === id));
+    this.save(a);
+    const act = a.find(p => p.active);
+    if (act && typeof Settings !== 'undefined') {
+      Settings.set('botBridgeURL', act.bridgeURL || '');
+      if (typeof BotBridge !== 'undefined') { BotBridge.lastStatus = null; try { BotBridge.tick(); } catch {} }
+    }
+    if (typeof Company !== 'undefined') Company.refresh();
+  },
+  add() {
+    const a = this.load();
+    if (a.length >= this.MAX) { alert('⚠️ รับดูแลได้สูงสุด ' + this.MAX + ' พอร์ต'); return; }
+    const name = prompt('ชื่อพอร์ต / ชื่อลูกค้า:');
+    if (!name) return;
+    const start  = parseFloat(prompt('เงินต้นในพอร์ต ($):', '30')) || 30;
+    const target = parseFloat(prompt('เป้าหมาย ($):', String(Math.round(start * 3)))) || start * 3;
+    const url    = prompt('Bot Bridge URL (Apps Script /exec) ของพอร์ตนี้ — เว้นว่างได้:', '') || '';
+    a.push({ id:'p'+Date.now(), name, client:name, start, target, bridgeURL:url, active:false });
+    this.save(a);
+    if (typeof Company !== 'undefined') Company.refresh();
+  },
+  remove(id) {
+    let a = this.load();
+    if (a.length <= 1) { alert('ต้องมีอย่างน้อย 1 พอร์ต'); return; }
+    if (!confirm('ลบพอร์ตนี้ออกจากการดูแล?')) return;
+    const wasActive = a.find(p => p.id === id)?.active;
+    a = a.filter(p => p.id !== id);
+    if (wasActive && a.length) a[0].active = true;
+    this.save(a);
+    this.setActive(a.find(p => p.active)?.id || a[0].id);
+  },
+  render() {
+    const a = this.load();
+    const liveBal = BotBridge?.lastStatus?.balance;
+    const chips = a.map(p => {
+      const bal = p.active && typeof liveBal === 'number' ? liveBal : p.start;
+      const pct = Math.max(0, Math.min(100, ((bal - p.start) / Math.max(1, p.target - p.start)) * 100));
+      const onTrack = bal >= p.start;
+      return `<div style="flex:1;min-width:120px;padding:7px 9px;border:1px solid ${p.active?'var(--teal)':'var(--border)'};border-radius:6px;background:${p.active?'rgba(0,255,200,0.07)':'rgba(255,255,255,0.02)'};position:relative">
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="font-size:9px;color:${p.active?'var(--teal)':'#9aa'};font-weight:bold">${p.active?'🟢':'⚪'} ${p.name}</span>
+          ${a.length>1?`<span onclick="event.stopPropagation();Portfolios.remove('${p.id}')" title="ลบ" style="margin-left:auto;cursor:pointer;color:var(--red);font-size:9px">✕</span>`:''}
+        </div>
+        <div style="font-size:7px;color:#9aa;margin:2px 0">$${(typeof bal==='number'?bal:p.start).toFixed(2)} / 🎯 $${p.target}</div>
+        <div style="height:5px;background:#1a2030;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${onTrack?'linear-gradient(90deg,var(--green),var(--gold))':'var(--red)'}"></div></div>
+        ${!p.active?`<button onclick="Portfolios.setActive('${p.id}')" class="btn btn-secondary" style="font-size:7px;padding:2px 6px;margin-top:4px;width:100%">เลือกพอร์ตนี้</button>`:'<div style="font-size:6px;color:var(--teal);margin-top:4px;text-align:center">● กำลังดูแล (active)</div>'}
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--gold);font-weight:bold;margin-bottom:6px">💼 พอร์ตที่รับดูแล (${a.length}/${this.MAX})
+        ${a.length < this.MAX ? `<button onclick="Portfolios.add()" class="btn btn-secondary" style="font-size:7px;padding:2px 8px;margin-left:6px">+ เพิ่มพอร์ต</button>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${chips}</div>
+      <div style="font-size:6px;color:#778;margin-top:4px">หมายเหตุ: แต่ละพอร์ต = บัญชี MT5 + Bridge URL ของตัวเอง · ระบบ poll พอร์ต active ทีละพอร์ต · lot คำนวณตามเงินต้นของพอร์ตนั้น</div>
+    </div>`;
+  },
+};
+window.Portfolios = Portfolios;
 
 /* ═══════════════════════════════════════════════════════
    TOP-DOWN ANALYZER — เทรดเดอร์ตัวจริงคิดยังไง
