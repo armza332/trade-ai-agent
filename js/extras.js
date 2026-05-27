@@ -1684,6 +1684,7 @@ const BotBridge = {
   // Phase 12.6: pull recently closed trades → feed into KB
   liveSeenTrades: null,
   liveStats: { count: 0, wins: 0, losses: 0, totalR: 0 },
+  recentTrades: [],   // Phase 15.5: raw trades for reason display
 
   async syncLiveTrades(url) {
     // dedupe via posId in localStorage
@@ -1695,6 +1696,7 @@ const BotBridge = {
       const r = await fetch(url + '?action=trades&t=' + Date.now());
       const data = await r.json();
       if (!data.ok || !Array.isArray(data.trades)) return;
+      this.recentTrades = data.trades.slice(0, 15);   // Phase 15.5: keep latest 15 for display
       let newCount = 0;
       data.trades.forEach(t => {
         if (!t || !t.posId) return;
@@ -2278,23 +2280,82 @@ const Company = {
       </div>`;
   },
 
+  // Phase 15.5: build human reason from trade entry context
+  _tradeReason(t) {
+    const parts = [];
+    const rsi = parseFloat(t.rsiAtEntry);
+    if (isFinite(rsi)) {
+      if (rsi <= 35) parts.push(`RSI ${rsi.toFixed(0)} (oversold)`);
+      else if (rsi >= 65) parts.push(`RSI ${rsi.toFixed(0)} (overbought)`);
+      else parts.push(`RSI ${rsi.toFixed(0)}`);
+    }
+    const bb = parseFloat(t.bbPosAtEntry);
+    if (isFinite(bb)) {
+      if (bb <= 0.2) parts.push('แตะ BB ล่าง');
+      else if (bb >= 0.8) parts.push('แตะ BB บน');
+      else parts.push('กลาง BB');
+    }
+    if (t.sessionAtEntry && t.sessionAtEntry !== '?') parts.push(t.sessionAtEntry.toUpperCase());
+    return parts.join(' · ') || 'ไม่มีข้อมูล';
+  },
+
   _accountantReport() {
     const bot = BotBridge?.lastStatus;
     const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
     if (!bot) return '<div style="font-size:9px;color:var(--gray)">รอข้อมูลจาก EA...</div>';
     const wr = (live.wins+live.losses) > 0 ? (live.wins/(live.wins+live.losses)*100).toFixed(0) : '—';
-    const pnlCol = (bot.todayPnL||0) > 0 ? 'var(--green)' : (bot.todayPnL||0) < 0 ? 'var(--red)' : 'var(--gray)';
-    return `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px">
-        <div>Balance: <b style="color:var(--teal)">$${(bot.balance||0).toFixed(2)}</b></div>
-        <div>Equity: <b>$${(bot.equity||0).toFixed(2)}</b></div>
-        <div>Today P/L: <b style="color:${pnlCol}">$${(bot.todayPnL||0).toFixed(2)}</b></div>
-        <div>Today W/L: <b style="color:var(--gold)">${bot.todayWins||0}/${bot.todayLosses||0}</b></div>
-        <div>Live trades: <b>${live.count}</b></div>
-        <div>Live WR: <b style="color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</b></div>
-        <div>Total R: <b style="color:${live.totalR>0?'var(--green)':'var(--red)'}">${live.totalR>0?'+':''}${live.totalR.toFixed(1)}R</b></div>
-        <div>Open: <b>${(bot.positions||[]).length}</b></div>
+    const pnl = bot.todayPnL || 0;
+    const pnlCol = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--gray)';
+    const bal = bot.balance || 0;
+
+    // Goal progress $30 → $100
+    const goalStart = 30, goalEnd = 100;
+    const goalPct = Math.max(0, Math.min(100, ((bal - goalStart) / (goalEnd - goalStart)) * 100));
+
+    // Recent trades with reasons
+    const trades = BotBridge?.recentTrades || [];
+    const tradeRows = trades.slice(0, 5).map(t => {
+      const win = t.outcome === 'win';
+      const sideEm = t.side === 'buy' ? '▲' : '▼';
+      const rcol = (parseFloat(t.rMult)||0) > 0 ? 'var(--green)' : 'var(--red)';
+      const sym3 = (t.sym||'').replace(/[mczr]$/i,'').replace('USD','');
+      return `<div style="font-size:7px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+        <span style="color:${t.side==='buy'?'var(--green)':'var(--red)'}">${sideEm} ${sym3}</span>
+        <span style="color:${rcol};margin-left:4px">${win?'✅':'❌'} ${(parseFloat(t.rMult)||0)>0?'+':''}${(parseFloat(t.rMult)||0).toFixed(1)}R</span>
+        <br><span style="color:var(--gray);font-size:6px">↳ ${this._tradeReason(t)}</span>
       </div>`;
+    }).join('') || '<div style="font-size:7px;color:var(--gray)">— ยังไม่มี trade ปิด —</div>';
+
+    return `
+      <!-- Key numbers -->
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <div style="flex:1;text-align:center;padding:6px;background:rgba(0,255,255,0.05);border:1px solid var(--teal);border-radius:4px">
+          <div style="font-size:6px;color:var(--gray)">BALANCE</div>
+          <div style="font-size:13px;color:var(--teal);font-weight:bold">$${bal.toFixed(2)}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:4px">
+          <div style="font-size:6px;color:var(--gray)">TODAY P/L</div>
+          <div style="font-size:13px;color:${pnlCol};font-weight:bold">${pnl>0?'+':''}$${pnl.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <!-- Goal progress -->
+      <div style="font-size:7px;color:var(--gray);margin-bottom:2px">🎯 เป้า $30 → $100 (${goalPct.toFixed(0)}%)</div>
+      <div style="height:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:6px">
+        <div style="height:100%;width:${goalPct}%;background:linear-gradient(90deg,var(--green),var(--gold))"></div>
+      </div>
+
+      <!-- Stats grid -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:8px;margin-bottom:6px">
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">W/L</span><br><b style="color:var(--gold)">${bot.todayWins||0}/${bot.todayLosses||0}</b></div>
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">WIN RATE</span><br><b style="color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</b></div>
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">TOTAL R</span><br><b style="color:${live.totalR>0?'var(--green)':'var(--red)'}">${live.totalR>0?'+':''}${live.totalR.toFixed(1)}</b></div>
+      </div>
+
+      <!-- Recent trades with reasons -->
+      <div style="font-size:7px;color:var(--gold);margin-bottom:2px">📋 Trade ล่าสุด (เข้าเพราะอะไร)</div>
+      <div style="max-height:120px;overflow-y:auto">${tradeRows}</div>
+    `;
   },
 
   _devMonitor() {
