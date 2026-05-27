@@ -195,6 +195,9 @@ const TradingWarRoom = {
     if (typeof Company !== 'undefined' && document.getElementById('modal-company')?.style.display === 'flex') {
       Company.refresh();
     }
+    if (typeof Office !== 'undefined' && document.getElementById('modal-office')?.style.display === 'flex') {
+      Office.refresh();
+    }
 
     // Render UI
     UI.renderGoldTeam(goldR);

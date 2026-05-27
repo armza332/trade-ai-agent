@@ -6,7 +6,7 @@
   <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="pragma" content="no-cache">
   <meta http-equiv="expires" content="0">
-  <title>TRADING WAR ROOM — AI Agent System v16.0</title>
+  <title>TRADING WAR ROOM — AI Agent System v17.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -75,7 +75,8 @@
   <div class="header-right">
     <button class="hdr-btn" onclick="Modal.open('backtest')" data-i18n="btn.backtest" data-i18n-title="bt.title">🔬 BACKTEST</button>
     <button class="hdr-btn" onclick="Modal.open('journal')" data-i18n="btn.journal">📓 JOURNAL</button>
-    <button class="hdr-btn" onclick="Modal.open('company')" title="Company / Org View">🏢 COMPANY</button>
+    <button class="hdr-btn" onclick="Modal.open('office')" title="Pixel Office HQ">🏢 OFFICE</button>
+    <button class="hdr-btn" onclick="Modal.open('company')" title="Company / Org View">📋 COMPANY</button>
     <button class="hdr-btn" onclick="Modal.open('botstatus')" title="MT5 Bot Status">🤖 BOT</button>
     <button class="hdr-btn" onclick="Modal.open('help')" data-i18n="btn.help">❓ HELP</button>
     <button class="hdr-btn" onclick="Modal.open('settings')" data-i18n="btn.settings">⚙ SETTINGS</button>
@@ -480,6 +481,17 @@
   </div>
 </div>
 
+<!-- ═══════════════════ OFFICE MODAL ═══════════════════ -->
+<div id="modal-office" class="modal" style="display:none">
+  <div class="modal-box modal-xl" style="max-width:760px;width:94vw;max-height:94vh;padding:0;overflow:hidden">
+    <div class="modal-header" style="padding:8px 12px">
+      <div class="modal-title">🏢 OFFICE HQ</div>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div id="office-body" style="max-height:86vh;overflow-y:auto"></div>
+  </div>
+</div>
+
 <!-- ═══════════════════ COMPANY MODAL ═══════════════════ -->
 <div id="modal-company" class="modal" style="display:none">
   <div class="modal-box modal-xl" style="max-width:1200px;width:96vw;max-height:94vh">
@@ -529,13 +541,13 @@
 </div>
 
 <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-<script src="js/i18n.js?v=16.0"></script>
-<script src="js/market.js?v=16.0"></script>
-<script src="js/agents.js?v=16.0"></script>
-<script src="js/ui.js?v=16.0"></script>
-<script src="js/extras.js?v=16.0"></script>
-<script src="js/backtest.js?v=16.0"></script>
-<script src="js/app.js?v=16.0"></script>
+<script src="js/i18n.js?v=17.0"></script>
+<script src="js/market.js?v=17.0"></script>
+<script src="js/agents.js?v=17.0"></script>
+<script src="js/ui.js?v=17.0"></script>
+<script src="js/extras.js?v=17.0"></script>
+<script src="js/backtest.js?v=17.0"></script>
+<script src="js/app.js?v=17.0"></script>
 
 </body>
 </html>

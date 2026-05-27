@@ -511,6 +511,10 @@ const Modal = {
       if (typeof BotBridge !== 'undefined') { BotBridge.tick(); if (!BotBridge.timer) BotBridge.start(); }
       Company.refresh();
     }
+    if (name === 'office' && typeof Office !== 'undefined') {
+      if (typeof BotBridge !== 'undefined') { BotBridge.tick(); if (!BotBridge.timer) BotBridge.start(); }
+      Office.refresh();
+    }
   },
   close() {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -2015,6 +2019,111 @@ window.BotBridge = BotBridge;
      👔 CEO (you) · 📋 Secretary · 📈 3 Traders ·
      🧠 Strategy Officer · 📊 Accountant · 💻 Dev · 🤖 Claude Advisor
    ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   PIXEL OFFICE (Phase 17) — clickable HQ landing room
+   Characters at desks → click opens detail panel
+   ═══════════════════════════════════════════════════════ */
+const Office = {
+  refresh() {
+    const el = document.getElementById('office-body');
+    if (el) el.innerHTML = this.render();
+  },
+
+  // a desk character tile
+  _char(face, name, role, sig, onclick, glow) {
+    const sigCol = sig === 'buy' ? '#00ff41' : sig === 'sell' ? '#ff3333'
+                 : sig === 'watch' ? '#ff8c00' : sig === 'online' ? '#00ffc8' : '#888';
+    const speech = sig === 'buy' ? 'BUY!' : sig === 'sell' ? 'SELL!' : sig === 'watch' ? 'watching...' : '';
+    return `
+      <div onclick="${onclick}" title="คลิกดู ${name}" style="
+        cursor:pointer;position:relative;text-align:center;
+        padding:10px 8px;border:2px solid ${glow?sigCol:'#2a3550'};border-radius:8px;
+        background:linear-gradient(180deg, ${sigCol}18 0%, rgba(20,28,45,0.9) 70%);
+        transition:transform .15s, box-shadow .15s;
+        ${glow?`box-shadow:0 0 12px ${sigCol}66`:''}"
+        onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 6px 16px ${sigCol}88'"
+        onmouseout="this.style.transform='';this.style.boxShadow='${glow?`0 0 12px ${sigCol}66`:'none'}'">
+        ${speech ? `<div style="position:absolute;top:-10px;right:-4px;background:${sigCol};color:#000;font-size:7px;padding:2px 5px;border-radius:6px 6px 6px 0;font-weight:bold">${speech}</div>` : ''}
+        <div style="font-size:34px;line-height:1;filter:drop-shadow(2px 2px 0 #000)">${face}</div>
+        <div style="margin-top:4px;font-size:9px;color:#fff;font-weight:bold">${name}</div>
+        <div style="font-size:6px;color:${sigCol}">${role}</div>
+        <!-- desk -->
+        <div style="margin-top:5px;height:5px;background:linear-gradient(90deg,#4a3520,#6b4e30,#4a3520);border-radius:2px"></div>
+      </div>`;
+  },
+
+  render() {
+    const bot  = BotBridge?.lastStatus;
+    const gold = TradingWarRoom?.lastGold;
+    const fx   = TradingWarRoom?.lastFX;
+    const live = BotBridge?.liveStats || { count:0, wins:0, losses:0, totalR:0 };
+    const wr   = (live.wins+live.losses)>0 ? (live.wins/(live.wins+live.losses)*100) : 0;
+    const bal  = bot?.balance || 0;
+    const goalPct = Math.max(0, Math.min(100, ((bal-30)/(100-30))*100));
+    const online = bot?.online;
+    const autoPilot = Settings.get('autoPilot', false);
+
+    const sig = (t) => t?.signal || t?.head?.signal || 'wait';
+
+    return `
+      <!-- top status bar -->
+      <div style="display:flex;align-items:center;gap:16px;padding:10px 14px;background:linear-gradient(90deg,rgba(0,255,200,0.08),transparent);border-bottom:2px solid var(--teal)">
+        <div style="font-size:13px;color:var(--gold);font-weight:bold">🏢 TRADING WAR ROOM CORP</div>
+        <div style="margin-left:auto;display:flex;gap:18px;align-items:center;font-size:8px">
+          <div>😊 MORALE<br><div style="width:80px;height:6px;background:#222;border-radius:3px;margin-top:2px"><div style="height:100%;width:${wr}%;background:${wr>=55?'var(--green)':'var(--orange)'};border-radius:3px"></div></div></div>
+          <div>🎯 GOAL $100<br><div style="width:80px;height:6px;background:#222;border-radius:3px;margin-top:2px"><div style="height:100%;width:${goalPct}%;background:linear-gradient(90deg,var(--green),var(--gold));border-radius:3px"></div></div></div>
+          <div style="text-align:center">${online?'🟢':'🔴'}<br><span style="color:${online?'var(--green)':'var(--red)'}">${online?'OPEN':'CLOSED'}</span></div>
+          ${autoPilot?'<div style="text-align:center;color:var(--green)">🤖<br>AUTO</div>':''}
+        </div>
+      </div>
+
+      <!-- office floor: window strip -->
+      <div style="height:36px;background:linear-gradient(180deg,#1a2640,#0d1525);border-bottom:1px solid #2a3550;display:flex;align-items:center;justify-content:center;gap:6px">
+        ${['🌆','🪟','🌆','🪟','🌆','🪟','🌆'].map(w=>`<span style="font-size:18px;opacity:0.5">${w}</span>`).join('')}
+        <span style="position:absolute;font-size:9px;color:#445;letter-spacing:3px">— EAT · SLEEP · TRADE · REPEAT —</span>
+      </div>
+
+      <!-- room -->
+      <div style="padding:16px;background:radial-gradient(ellipse at top,#141c2e,#0a0f18)">
+
+        <!-- Executive row -->
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:420px;margin:0 auto 14px">
+          ${this._char('👔','CEO (คุณ)','Boss · click=Company','online',"Modal.open('company')",true)}
+          ${this._char('📋','Janie','เลขา · คุยได้','online',"Modal.open('company')",true)}
+        </div>
+
+        <!-- Trade desk row -->
+        <div style="font-size:8px;color:var(--gold);text-align:center;margin-bottom:6px">📈 TRADE DESK</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+          ${this._char('🥷','XAU Trader','ทอง',sig(gold),"Modal.open('company')",sig(gold)==='buy'||sig(gold)==='sell')}
+          ${this._char('🏹','AUD Trader','ออส',sig(fx?.aud),"Modal.open('company')",sig(fx?.aud)==='buy'||sig(fx?.aud)==='sell')}
+          ${this._char('⚔️','EUR Trader','ยูโร',sig(fx?.eur),"Modal.open('company')",sig(fx?.eur)==='buy'||sig(fx?.eur)==='sell')}
+        </div>
+
+        <!-- Support staff row -->
+        <div style="font-size:8px;color:var(--purple);text-align:center;margin-bottom:6px">🏛 SUPPORT</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+          ${this._char('🧠','Strategy','KB · click=Journal','online',"Modal.open('journal')",false)}
+          ${this._char('📊','Accountant','P&L · click=BOT','online',"Modal.open('botstatus')",false)}
+          ${this._char('💻','Dev','Health','online',"Modal.open('botstatus')",false)}
+          ${this._char('🤖','Claude','Advisor','online',"Modal.open('company')",false)}
+        </div>
+      </div>
+
+      <!-- console feed -->
+      <div style="padding:8px 14px;background:#0a0f18;border-top:1px solid #2a3550">
+        <div style="font-size:7px;color:var(--teal);margin-bottom:3px">🖥 SYSTEM CONSOLE</div>
+        <div style="font-size:8px;color:#8fa;line-height:1.6">
+          ${bot ? `[${bot.ageSec||0}s ago] EA ${online?'online':'offline'} · BAL $${bal.toFixed(2)} · ${(bot.positions||[]).length} positions open` : '[--] รอเชื่อม EA...'}<br>
+          [live] KB ${live.count} trades · WR ${wr.toFixed(0)}% · Total ${live.totalR>0?'+':''}${live.totalR.toFixed(1)}R
+          ${BotBridge?.lossStreak>=3?` · <span style="color:var(--red)">⚠️ แพ้ ${BotBridge.lossStreak} ติด</span>`:''}
+        </div>
+      </div>
+    `;
+  },
+};
+window.Office = Office;
+
 const Company = {
   chatLog: [],   // {role:'user'|'sec', text}
   showPerf: false,   // Phase 16: performance analytics toggle
@@ -2484,11 +2593,12 @@ const Company = {
       </div>
 
       <!-- Stats grid -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:8px;margin-bottom:6px">
-        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">W/L</span><br><b style="color:var(--gold)">${bot.todayWins||0}/${bot.todayLosses||0}</b></div>
-        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">WIN RATE</span><br><b style="color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</b></div>
-        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">TOTAL R</span><br><b style="color:${live.totalR>0?'var(--green)':'var(--red)'}">${live.totalR>0?'+':''}${live.totalR.toFixed(1)}</b></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:8px;margin-bottom:2px">
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">วันนี้ W/L</span><br><b style="color:var(--gold)">${bot.todayWins||0}/${bot.todayLosses||0}</b></div>
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">WIN RATE (รวม)</span><br><b style="color:${wr>=55?'var(--green)':'var(--red)'}">${wr}%</b></div>
+        <div style="text-align:center"><span style="color:var(--gray);font-size:6px">TOTAL R (รวม)</span><br><b style="color:${live.totalR>0?'var(--green)':'var(--red)'}">${live.totalR>0?'+':''}${live.totalR.toFixed(1)}</b></div>
       </div>
+      <div style="font-size:6px;color:var(--gray);text-align:center;margin-bottom:6px">📊 ${live.count} ไม้สะสม (ตั้งแต่เริ่มเชื่อม) · วันนี้นับจาก EA reset เที่ยงคืน</div>
 
       <!-- Recent trades with reasons -->
       <div style="font-size:7px;color:var(--gold);margin-bottom:2px">📋 Trade ล่าสุด (เข้าเพราะอะไร)</div>
